@@ -1,0 +1,25 @@
+<Panel id="KatkaNativeSettings" style="horizontal-align: center; vertical-align: center; width: 460px; padding: 24px; flow-children: down; background-color: #20221efa; border: 1px solid #96815c;">
+  <Label text="KATKA — уведомления о матче" style="font-size: 26px; font-weight: bold; color: #f3e6c7;" />
+  <Label id="KatkaConnection" text="Подключаемся к серверу…" style="margin-top: 8px; color: #c3bba7; font-size: 18px;" />
+  <Label id="KatkaPing" text="Отклик сервера: —" style="margin-top: 4px; color: #c3bba7; font-size: 17px;" />
+  <Label text="Доставка команды может занять больше времени." style="margin-top: 2px; color: #969180; font-size: 14px;" />
+  <TextButton id="KatkaNotifications" text="Оповещения: Авто" class="PopupButton" style="margin-top: 12px;" />
+  <Panel id="KatkaPair" style="flow-children: down; width: 100%; margin-top: 16px;">
+    <Label text="Код из Telegram" style="font-size: 18px; color: #ece3ce;" />
+    <TextEntry id="KatkaCode" maxchars="16" style="width: 100%; height: 42px; padding: 6px; background-color: #151813; color: #fff4cb; font-size: 22px;" />
+    <TextButton id="KatkaBind" text="Подключить" class="PopupButton" style="margin-top: 10px;" />
+  </Panel>
+  <Panel id="KatkaLinked" visible="false" style="flow-children: down; margin-top: 16px;">
+    <Label text="Telegram подключён" style="color: #acd8ad; font-size: 18px;" />
+    <TextButton id="KatkaTest" text="Проверить уведомление" class="PopupButton" style="margin-top: 8px;" />
+    <TextButton id="KatkaUnlink" text="Отключить Telegram" class="PopupButton" style="margin-top: 8px;" />
+    <Panel id="KatkaUnlinkConfirm" visible="false" style="flow-children: down; margin-top: 8px;">
+      <Label text="Отключить Telegram? Уведомления и управление через бота перестанут работать." style="color: #efcf9f; font-size: 17px; width: 100%;" />
+      <Panel style="flow-children: right; margin-top: 8px;">
+        <TextButton id="KatkaUnlinkYes" text="Да, отключить" class="PopupButton" />
+        <TextButton id="KatkaUnlinkNo" text="Отмена" class="PopupButton" style="margin-left: 8px;" />
+      </Panel>
+    </Panel>
+  </Panel>
+  <Label id="KatkaFeedback" style="margin-top: 8px; font-size: 17px; color: #efcf9f;" />
+</Panel>

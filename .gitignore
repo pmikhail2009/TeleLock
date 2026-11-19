@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+
+# Локальная конфигурация и секреты
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Данные локальных приложений и редакторов
+.freebuff/
+.skales-backup/
+.vscode/
+.idea/
+.codex/
+.agents/
+.aws/
+.tgcloud/
+node_modules/
+serverless/tgcloud/lib/config.js
+
+# Базы, журналы и временные файлы
+*.db
+*.db-*
+*.sqlite*
+*.log
+*.bak
+*.tmp
+Thumbs.db
+.DS_Store
+
+# Локальные публикации, привязки и учётные данные
+.wrangler/
+credentials
+credentials.*
+*secrets*.json
+passwords.json
+Пароли.txt
+*pairing*.json
+*bindings*.json
+*.vpk
+*.map
+exceptions.txt

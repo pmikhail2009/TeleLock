@@ -1,0 +1,8 @@
+opencv-python
+numpy
+psutil
+PyAutoGUI
+requests
+mss
+pywin32; sys_platform == "win32"
+python-dotenv

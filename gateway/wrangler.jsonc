@@ -1,0 +1,10 @@
+{
+  "name": "katka-game-gateway",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-01-01",
+  "workers_dev": true,
+  "durable_objects": {
+    "bindings": [{ "name": "PAIRINGS", "class_name": "Pairing" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Pairing"] }]
+}
