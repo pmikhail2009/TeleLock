@@ -1,9 +1,0 @@
-{
-  "name": "katka-telegram-serverless",
-  "version": "1.0.0",
-  "private": true,
-  "type": "module",
-  "devDependencies": {
-    "@tgcloud/cli": "0.2.0"
-  }
-}
