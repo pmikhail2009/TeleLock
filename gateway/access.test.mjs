@@ -11,7 +11,10 @@ function fixture() {
     ['client:two', {owner:202, generation, since:0}],
   ]);
   const storage = {get:async key=>structuredClone(rows.get(key)),
-    put:async(key,value)=>rows.set(key,structuredClone(value)), transaction:async fn=>fn(storage)};
+    put:async(key,value)=>rows.set(key,structuredClone(value)), delete:async key=>rows.delete(key),
+    list:async ({prefix, limit, startAfter = ''}) => new Map([...rows].sort()
+      .filter(([key]) => key.startsWith(prefix) && key > startAfter).slice(0, limit)),
+    transaction:async fn=>fn(storage)};
   const directory = new Pairing({storage}, {KATKA_OWNER_PASSWORD_HASH:hash('personal'), KATKA_TEST_PASSWORD_HASH:hash('shared')});
   const request = body => directory.fetch(new Request('https://internal', {method:'POST',body:JSON.stringify(body)}));
   let accessId = 0;
@@ -61,6 +64,28 @@ test('public game requests cannot activate access and service access needs authe
     const response=await worker.fetch(new Request('https://example.test'+path,{method:'POST',headers:{Authorization:'Bearer '+'b'.repeat(64)},body:JSON.stringify({owner:101,password:'shared'})}),{});
     assert.equal(response.status,path==='/v1/access'?404:403);
   }
+});
+
+test('community reports stay private and only the owner can publish or remove known issues', async () => {
+  const f = fixture();
+  await f.access(101, 'personal');
+  await f.access(202, 'shared');
+  const call = (owner, operation, extra = {}) => f.request({ action: 'community', owner, update: { operation, ...extra } });
+  const report = { text: 'Два уведомления.', date: 1800000000, id: 1 };
+  assert.equal((await call(303, 'report', report)).status, 200);
+  await call(303, 'report', report);
+  assert.equal((await call(202, 'inbox')).status, 403);
+  const inbox = await (await call(101, 'inbox')).json();
+  assert.equal(inbox.entries.length, 1);
+  assert.equal(inbox.entries[0].text, report.text);
+  assert.deepEqual((await (await call(303, 'known')).json()).entries, []);
+  assert.equal((await call(202, 'add', report)).status, 403);
+  assert.equal((await call(101, 'add', report)).status, 200);
+  const { entries: [{ id }] } = await (await call(303, 'known')).json();
+  assert.equal((await call(202, 'delete', { id })).status, 403);
+  assert.equal((await call(101, 'delete', { id })).status, 200);
+  await call(101, 'add', report);
+  assert.deepEqual((await (await call(303, 'known')).json()).entries, []);
 });
 
 test('re-delivering a password message does not toggle access twice',async()=>{

@@ -1,4 +1,5 @@
 export const labels = {
+  community: '👥 Центр сообщества Telelock',
   modes: '🎮 Выбрать режим',
   watch: '👀 Включить наблюдение',
   cancel: '⏹ Отменить поиск',
@@ -14,11 +15,11 @@ export const labels = {
 
 export function keyboard(linked, modes = false, tier = 'free') {
   return {
-    keyboard: !linked ? [[labels.code, labels.help]] : modes
+    keyboard: !linked ? [[labels.code, labels.help], [labels.community]] : modes
       ? [[labels.normal], [labels.ranked], [labels.street], [labels.back]]
       : tier === 'owner' || tier === 'test'
-        ? [[labels.modes, labels.watch], [labels.cancel, labels.status], [labels.settings], [labels.help, labels.code]]
-        : [[labels.modes], [labels.help, labels.code]],
+        ? [[labels.modes, labels.watch], [labels.cancel, labels.status], [labels.settings], [labels.help, labels.code], [labels.community]]
+        : [[labels.modes], [labels.help, labels.code], [labels.community]],
     resize_keyboard: true,
     is_persistent: true,
     input_field_placeholder: linked ? 'Управление вашей игрой' : 'Получите код и подключите игру',
@@ -29,6 +30,7 @@ export function commandFor(text) {
   if (typeof text !== 'string') return null;
   const value = text.trim();
   const buttons = {
+    [labels.community]: '/community',
     [labels.settings]: '/settings', ['📡 Статус подключения']: '/status', [labels.modes]: '/modes', [labels.watch]: '/watch_black',
     [labels.cancel]: '/cancel', [labels.status]: '/status',
     [labels.help]: '/help', [labels.code]: '/code',
