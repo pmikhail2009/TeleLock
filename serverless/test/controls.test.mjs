@@ -31,9 +31,10 @@ async function fixture({ linked = true, stale = false, offline = false, tier = '
       this.setExport('redeemCode', async () => {});
     }, { context }),
     '../lib/controls.js': new vm.SourceTextModule(await readFile(new URL('../tgcloud/lib/controls.js', import.meta.url), 'utf8'), { context }),
+    '../lib/community.js': new vm.SourceTextModule(await readFile(new URL('../tgcloud/lib/community.js', import.meta.url), 'utf8'), { context }),
   };
   const handler = new vm.SourceTextModule(await readFile(new URL('../tgcloud/handlers/message.js', import.meta.url), 'utf8'), { context });
-  await handler.link(name => modules[name]);
+  await handler.link(name => modules[name === './controls.js' ? '../lib/controls.js' : name]);
   await handler.evaluate();
   const invoke = async (text, overrides = {}) => handler.namespace.default({
     chat: { id: 101, type: 'private' }, from: { id: 101 },

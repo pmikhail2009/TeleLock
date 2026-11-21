@@ -1,4 +1,5 @@
 import { experience, modeNames } from './experience.mjs';
+import { community } from './community.mjs';
 import { completePairing } from './tgcloud-runtime.mjs';
 import { keyboard, restrictedText } from '../serverless/tgcloud/lib/controls.js';
 
@@ -230,6 +231,7 @@ export class Pairing {
   async handleRequest(request) {
     const { action, installation, expires, generation, owner, revision, update, ack, match,
       command: commandId, status: resultStatus, test: receipt, elapsed, telemetry, origin } = await request.json();
+    if (action === 'community') return this.handleCommunity(owner, update);
     if (['settings','telemetry','testbot'].includes(action)) return this.experienceRequest({action,installation,owner,generation,update,telemetry});
     if (action === 'access') {
       if (!Number.isSafeInteger(owner) || owner <= 0) return Response.json({ error: 'Неверный аккаунт' }, { status: 400 });
@@ -420,14 +422,14 @@ export class Pairing {
   }
 }
 
-Object.assign(Pairing.prototype, experience);
+Object.assign(Pairing.prototype, experience, community);
 
 export default {
   async fetch(request, env) {
     const panelOrigin = env.KATKA_PANEL_ORIGIN;
     const path = new URL(request.url).pathname;
     const game = ['/pairing/claim','/v1/bind','/v1/status','/v1/poll','/v1/match','/v1/test','/v1/unlink','/v1/result','/v1/telemetry','/v1/settings'].includes(path);
-    const actions = { '/service/settings':'settings', '/service/testbot':'testbot', '/service/access': 'access', '/service/status': 'status', '/service/command': 'command', '/service/offer': 'offer', '/service/inspect': 'inspect', '/service/confirm': 'confirm', '/service/wait': 'wait' };
+    const actions = { '/service/community':'community', '/service/settings':'settings', '/service/testbot':'testbot', '/service/access': 'access', '/service/status': 'status', '/service/command': 'command', '/service/offer': 'offer', '/service/inspect': 'inspect', '/service/confirm': 'confirm', '/service/wait': 'wait' };
     if (!game && !Object.hasOwn(actions, path)) return new Response(null, { status: 404 });
     const headers = {};
     if (game && request.headers.get('Origin') === panelOrigin) {
@@ -444,13 +446,15 @@ export default {
     let body;
     try { body = await request.json(); } catch { return new Response(null, { status: 400, headers }); }
     const directory = () => env.PAIRINGS.get(env.PAIRINGS.idFromName('bindings'));
-    if (['/v1/status','/v1/poll','/v1/match','/v1/test','/v1/unlink','/v1/result','/service/command','/service/status','/service/access','/service/settings','/service/testbot','/v1/telemetry','/v1/settings'].includes(path)) {
+    if (path === '/service/community' && (!Number.isSafeInteger(body?.owner) || body.owner <= 0))
+      return new Response(null, { status: 400, headers });
+    if (['/service/community','/v1/status','/v1/poll','/v1/match','/v1/test','/v1/unlink','/v1/result','/service/command','/service/status','/service/access','/service/settings','/service/testbot','/v1/telemetry','/v1/settings'].includes(path)) {
       if (path === '/service/status' && body?.owner !== undefined &&
           (!Number.isSafeInteger(body.owner) || body.owner <= 0)) return new Response(null, { status: 400, headers });
       const action = path.split('/').pop();
       const reply = await directory().fetch('https://pairing.internal/', {
         method: 'POST', body: JSON.stringify({ action, installation: path === '/service/status' ? body?.installation : await fingerprint(token),
-          owner: ['/service/status','/service/access','/service/settings','/service/testbot'].includes(path) ? body?.owner : undefined,
+          owner: ['/service/community','/service/status','/service/access','/service/settings','/service/testbot'].includes(path) ? body?.owner : undefined,
           generation: body?.generation, ack: body?.ack, match: body?.match,
           command: body?.command, status: body?.status, test: body?.test, elapsed: body?.elapsed,
           telemetry: game ? body?.telemetry : undefined, origin: body?.origin,

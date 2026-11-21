@@ -3,6 +3,8 @@ import { gateway, secret } from '../lib/config.js';
 import { issueCode, pairingForOwner, redeemCode } from '../lib/pairing.js';
 import { commandFor, keyboard, helpText, freeHelpText, restrictedText, statusText, settingsMessage } from '../lib/controls.js';
 
+import { communityMessage, communityMaxLength, communityReplyType, communityDenied, communityConfirmation } from '../lib/community.js';
+
 async function relay(action, payload) {
   const response = await fetch(gateway + '/service/' + action, {
     method: 'POST',
@@ -10,6 +12,7 @@ async function relay(action, payload) {
     body: JSON.stringify(payload),
   });
   if (response.status === 400 || response.status === 409) return null;
+  if (action === 'community' && response.status === 403) return response.json();
   if (!response.ok) throw new Error('Сервис подключения KATKA недоступен');
   return response.json();
 }
@@ -32,6 +35,26 @@ export default async function (message, ctx) {
       message.from?.id !== message.chat.id) return;
   const command = commandFor(message.text);
   let tier = 'free';
+  const owner = message.chat.id;
+  const submission = gateway && communityReplyType(message.reply_to_message);
+  if (submission) {
+    const { operation, language } = submission;
+    const text = typeof message.text === 'string' ? message.text.trim() : '';
+    if (!text || text.length > communityMaxLength) {
+      await api.sendMessage({ chat_id: owner, text: 'Отправьте текстовый ответ длиной до 1000 символов.' });
+      return;
+    }
+    let result;
+    try {
+      result = await relay('community', { owner, operation, text, date: message.date, id: ctx.update?.update_id });
+    } catch {
+      result = null;
+    }
+    const reply = result?.saved ? communityConfirmation(language, operation) : { text: result?.denied
+      ? communityDenied(language) : 'Не удалось подтвердить сохранение. Попробуйте ещё раз.' };
+    await api.sendMessage({ chat_id: owner, ...reply });
+    return;
+  }
   if (!command) {
     if (!gateway || typeof message.text !== 'string' || !message.text.trim()) return;
     const result = await relay('access', { owner: message.chat.id, password: message.text.trim(), id: message.message_id ?? ctx.update?.update_id });
@@ -72,6 +95,11 @@ export default async function (message, ctx) {
   }
   let binding, current;
   try {
+    if (command === '/community') {
+      const result = await relay('community', { owner, operation: 'home' });
+      await api.sendMessage({ chat_id: owner, ...communityMessage(result) });
+      return;
+    }
     binding = await pairingForOwner(message.chat.id);
     current = await relay('status', { owner: message.chat.id });
   } catch {
