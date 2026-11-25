@@ -1,0 +1,5 @@
+<Panel style="width: 100%; flow-children: down; margin-top: 8px; padding: 8px; background-color: #30352b;">
+ <Label id="KatkaLabTiming" text="" style="width: 100%; color: #e2d9bf; font-size: 15px;" />
+ <TextButton id="KatkaLabStrategy" text="" class="PopupButton" style="margin-top: 4px;" />
+ <TextButton id="KatkaLabMeasure" text="" class="PopupButton" style="margin-top: 4px;" />
+</Panel>

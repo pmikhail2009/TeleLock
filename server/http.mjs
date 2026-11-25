@@ -24,8 +24,8 @@ export function clientServer(registry, send, matches = new MatchDelivery(registr
       res.end(JSON.stringify(data));
     };
     if (req.method === 'GET' && req.url?.split('?')[0] === '/panel') return servePanel(res);
-    const panelOrigin = process.env.KATKA_PANEL_ORIGIN;
-    if (panelOrigin && req.url?.startsWith('/v1/') && req.headers.origin === panelOrigin) {
+    const panelOrigin = process.env.KATKA_PANEL_ORIGIN || 'https://app9030850067.tgcloud.ai';
+    if (req.url?.startsWith('/v1/') && req.headers.origin === panelOrigin) {
       res.setHeader('Access-Control-Allow-Origin', req.headers.origin);
       res.setHeader('Vary', 'Origin');
       if (req.method === 'OPTIONS') {
@@ -59,7 +59,7 @@ export function clientServer(registry, send, matches = new MatchDelivery(registr
           if (typeof body.code !== 'string') throw new Error('Введите код');
           const binding = registry.bind(token, body.code);
           result = { generation: binding.generation };
-          notice = [binding.chat, 'Telegram подключён к KATKA.'];
+          notice = [binding.chat, 'Telegram подключён к Telelock.'];
           break;
         }
         case '/v1/status':
@@ -69,7 +69,7 @@ export function clientServer(registry, send, matches = new MatchDelivery(registr
           registry.unlink(token, generation);
           break;
         case '/v1/test':
-          notice = [registry.owner(token, generation), '🎮 Проверка KATKA. Уведомления подключены.'];
+          notice = [registry.owner(token, generation), '🎮 Проверка Telelock. Уведомления подключены.'];
           break;
         case '/v1/poll':
           if (!Number.isSafeInteger(body.ack ?? 0) || (body.ack ?? 0) < 0) throw new Error('Неверное подтверждение');

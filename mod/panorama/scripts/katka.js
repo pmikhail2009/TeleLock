@@ -2,12 +2,13 @@
 (function () {
   'use strict';
   var panelUrl = "KATKA_PANEL_URL";
+  var lab = "KATKA_LAB" === 'true';
   var context = $.GetContextPanel();
   var frame = context.FindChildTraverse('KatkaCommands') || context.FindChildTraverse('KatkaSettings');
   if (!frame) return;
   var isController = frame.id === 'KatkaCommands';
   var session = String(Date.now());
-  var url = panelUrl + (isController ? '?view=commands' : '?view=native') + '&session=' + session;
+  var url = panelUrl + (isController ? '?view=commands' : '?view=native&profile=1&errors=1') + '&session=' + session + (lab ? '&lab=1' : '');
   // Never pass received strings to DispatchEvent as event names.
   var events = {
     '/play_normal': 'CitadelStartUnrankedMatch',
@@ -119,14 +120,14 @@
     function inspectRoster() {
       if (!diagnostic) return;
       try {
-        diagnostic.text = 'KATKA: этап=' + launchStage + '; ready=' + commandsReady + '; busy=' + commandsBusy +
+        diagnostic.text = 'Telelock: этап=' + launchStage + '; ready=' + commandsReady + '; busy=' + commandsBusy +
           '; in_matchmaking=' + dashboardInQueue();
-      } catch (error) { diagnostic.text = 'KATKA: ошибка проверки: ' + String(error); }
+      } catch (error) { diagnostic.text = 'Telelock: ошибка проверки: ' + String(error); }
       $.Schedule(0.5, inspectRoster);
     }
     if (diagnostic) inspectRoster();
     pollCommands = function () {
-      if (Date.now() - lastReply > 10000) {
+      if (Date.now() - lastReply > 25000) {
         recoverySequence++;
         commandsReady = false;
         commandsBusy = false;
@@ -258,7 +259,7 @@
     function item(id) { return context.FindChildTraverse('Katka' + id); }
     function settingsRoot() {
       var root = context;
-      while (root.GetParent()) root = root.GetParent();
+      while (root.GetParent && root.GetParent()) root = root.GetParent();
       return root;
     }
     var diagnoseButton = item('Diagnose');
@@ -268,17 +269,106 @@
       });
     }
     var requestId = 0, active = false, activeAction = '', connected = false, linked = false;
-    var confirmingUnlink = false, connectionError = false;
-    var notificationMode = 'auto', accessTier = 'free';
+    var labStrategy = 'baseline', labStarted = 0, labTiming = null;
+    var confirmingUnlink = false, connectionError = false, checked = false, ping = null, feedback = '';
+    var notificationMode = 'auto', accessTier = 'free', language = 'en', pendingLanguage = '';
+    var languagePickerOpen = false;
+    var pendingNotifications = false;
+    var localRoot = settingsRoot();
+    try {
+      var cached = JSON.parse(localRoot.GetAttributeString('telelock_local_profile', 'null'));
+      if (cached && (cached.language === 'en' || cached.language === 'ru') &&
+          /^(free|owner|test)$/.test(cached.tier) && /^(on|off|auto)$/.test(cached.mode)) {
+        language = cached.language; accessTier = cached.tier; notificationMode = cached.mode;
+        linked = cached.linked === true;
+        pendingLanguage = cached.pendingLanguage ? language : '';
+        pendingNotifications = cached.pendingNotifications === true;
+      }
+    } catch (_) {}
+    function rememberProfile() {
+      if (localRoot.SetAttributeString) localRoot.SetAttributeString('telelock_local_profile', JSON.stringify({
+        language: language, tier: accessTier, mode: notificationMode, linked: linked,
+        pendingLanguage: !!pendingLanguage, pendingNotifications: pendingNotifications
+      }));
+    }
+    var languageChoices = { en: { button: 'LanguageEn', name: 'English' }, ru: { button: 'LanguageRu', name: 'Русский' } };
+    function t(en, ru) { return language === 'ru' ? ru : en; }
     function fullAccess() { return accessTier === 'owner' || accessTier === 'test'; }
-    function renderMode() {
-      var labels = { on: 'ВКЛ', off: 'ВЫКЛ', auto: 'Авто' };
+    function render() {
+      var labels = t({ on: 'On', off: 'Off', auto: 'Auto' }, { on: 'ВКЛ', off: 'ВЫКЛ', auto: 'Авто' });
+      var copy = {
+        Heading: lab ? t('Telelock — test build', 'Telelock — тестовая версия') :
+          t('Telelock — match alerts', 'Telelock — уведомления о матче'),
+        LatencyHint: t('Commands can take longer to reach the game.', 'Доставка команды может занять больше времени.'),
+        CodeLabel: t('Telegram code', 'Код из Telegram'), Bind: t('Connect', 'Подключить'),
+        TelegramBot: t('Open Telegram bot', 'Открыть бота в Telegram'),
+        LinkedLabel: t('Telegram connected', 'Telegram подключён'),
+        Test: t('Send a test notification', 'Проверить уведомление'),
+        Unlink: t('Disconnect Telegram', 'Отключить Telegram'),
+        UnlinkPrompt: t('Disconnect Telegram? Bot controls and match alerts will stop.',
+          'Отключить Telegram? Уведомления и управление через бота перестанут работать.'),
+        UnlinkYes: t('Disconnect', 'Да, отключить'), UnlinkNo: t('Cancel', 'Отмена')
+      };
+      for (var id in copy) item(id).text = copy[id];
+      if (diagnoseButton) diagnoseButton.text = t('Test controls without matchmaking', 'Проверить управление без поиска');
+      item('FlagEn').visible = language === 'en';
+      item('FlagRu').visible = language === 'ru';
+      var canChooseLanguage = !active || activeAction === 'status';
+      item('Language').enabled = canChooseLanguage;
+      item('LanguagePicker').visible = languagePickerOpen;
+      Object.keys(languageChoices).forEach(function (choice) {
+        var option = languageChoices[choice];
+        item(option.button).text = (language === choice ? '✓ ' : '') + option.name;
+        item(option.button).enabled = canChooseLanguage;
+      });
+      item('Connection').text = !checked ? t('Connecting to the server…', 'Подключаемся к серверу…')
+        : connected ? t('Server online', 'Сервер на связи') : t('Server unreachable', 'Нет связи с сервером');
+      item('Ping').text = t('Server latency: ', 'Отклик сервера: ') + (ping === null ? '—' : ping + t(' ms', ' мс'));
+      item('PingNow').text = 'ping';
+      if (lab) {
+        var strategy = {
+          baseline: t('Baseline', 'Текущий маршрут'),
+          cached: t('Cached preflight', 'Кэш предварительного запроса'),
+          lean: t('Lean status + cache', 'Короткий статус + кэш')
+        };
+        item('LabStrategy').text = strategy[labStrategy];
+        item('LabMeasure').text = t('Measure now', 'Замерить сейчас');
+        item('LabStrategy').enabled = item('LabMeasure').enabled = !active;
+        item('LabTiming').text = !labTiming ? t('Waiting for a timing sample', 'Ожидаем замер') :
+          t('Game round trip ', 'Полный цикл ') + labTiming.total + t(' ms', ' мс') +
+          (labTiming.http === null ? t(' · detailed timing unavailable', ' · детализация недоступна') :
+            '\nHTTP ' + labTiming.http + t(' ms · gateway ', ' мс · шлюз ') + (labTiming.gateway === null ? '—' : labTiming.gateway + t(' ms', ' мс')) +
+            '\n' + t('Response processing ', 'Обработка ответа ') + (labTiming.browser === null ? '—' : labTiming.browser + t(' ms', ' мс')));
+      }
+      var messages = {
+        invalid_code: t('Enter the 16-character Telegram code.', 'Введите 16 символов кода из Telegram.'),
+        binding: t('Connecting Telegram…', 'Подключаем Telegram…'),
+        pairing_expired: t('The code is invalid or expired. Get a new code with /code in the Telelock bot.',
+          'Код неверен или истёк. Получите новый командой /code в боте Telelock.'),
+        pairing_changed: t('The code was used or the connection changed. Get a new code with /code.',
+          'Код уже использован или привязка изменилась. Получите новый код командой /code.'),
+        pairing_unavailable: t('Telegram could not confirm the connection. Try connecting again.',
+          'Telegram не подтвердил подключение. Повторите попытку.'),
+        bound: t('Connected', 'Подключено'),
+        tested: t('Test sent. Check Telegram for the timing.', 'Уведомление отправлено, задержка указана в Telegram'),
+        test_failed: t('Could not confirm the test. Try again.', 'Не удалось подтвердить уведомление или записать задержку. Повторите проверку.'),
+        unbound: t('Telegram disconnected', 'Telegram отключён'),
+        rejected: t('Request rejected. Check the code and connection.', 'Запрос отклонён. Проверьте код и привязку.'),
+        language_failed: t('Could not change the language. Try again.', 'Не удалось изменить язык. Попробуйте ещё раз.'),
+        connection_storage: t('Could not open installation storage.', 'Не удалось открыть хранилище установки.'),
+        connection_network: t('Could not reach the server.', 'Не удалось получить ответ сервера.'),
+        connection_response: t('The server returned an invalid response.', 'Получен некорректный ответ сервера.'),
+        connection_timeout: t('The server did not respond in time.', 'Сервер не ответил вовремя.'),
+        connection_unknown: t('Reconnecting automatically…', 'Подключение повторится автоматически.')
+      };
+      item('Feedback').text = pendingLanguage
+        ? t('Saved on this PC. Syncing language with Telegram…', 'Сохранено на ПК. Синхронизируем язык с Telegram…')
+        : pendingNotifications ? t('Saved on this PC. Syncing notifications with Telegram…',
+          'Сохранено на ПК. Синхронизируем оповещения с Telegram…')
+        : messages[feedback] || '';
       item('Notifications').enabled = fullAccess();
       item('Test').visible = fullAccess();
-      item('Notifications').text = 'Оповещения: ' + labels[notificationMode];
-    }
-    renderMode();
-    function render() {
+      item('Notifications').text = t('Notifications: ', 'Оповещения: ') + labels[notificationMode];
       item('Pair').visible = !linked;
       item('Linked').visible = linked;
       item('Bind').enabled = item('Test').enabled = item('Unlink').enabled =
@@ -291,35 +381,70 @@
     function send(action) {
       if (active && (action === 'status' || activeAction !== 'status')) return;
       var code = action === 'bind' ? item('Code').text.trim().toUpperCase() :
-        action === 'notifications' ? notificationMode : action === 'test' ? String(Date.now()) : '';
+        action === 'notifications' ? notificationMode : action === 'test' ? String(Date.now()) :
+        action === 'language' ? pendingLanguage : lab && action === 'status' ? labStrategy : '';
       if (action === 'bind' && !/^[0-9A-F]{16}$/.test(code)) {
-        item('Feedback').text = 'Введите 16 символов кода из Telegram.';
+        feedback = 'invalid_code';
+        render();
         return;
       }
       active = true;
       activeAction = action;
-      if (action !== 'status') item('Feedback').text = action === 'bind' ? 'Подключаем Telegram…' : '';
+      if (action !== 'status') feedback = action === 'bind' ? 'binding' : '';
       render();
       var id = ++requestId;
+      if (lab && action === 'status') labStarted = Date.now();
       frame.SetURL(url + '#' + id + ':' + action + ':' + code);
-      $.Schedule(action === 'bind' ? 630 : action === 'test' ? 65 : 25, function () {
+      $.Schedule(action === 'bind' ? 45 : action === 'status' ? 45 : action === 'test' || action === 'language' ? 65 : 25, function () {
         if (active && id === requestId) {
           active = connected = false;
           activeAction = '';
-          item('Connection').text = 'Нет связи с сервером';
-          item('Ping').text = 'Отклик сервера: —';
+          checked = true;
+          ping = null;
+          if (lab && action === 'status') {
+            labTiming = null;
+            $.Msg('Telelock lab status [' + labStrategy + '] no reply from game browser');
+          }
           connectionError = true;
-          item('Feedback').text = 'Нет ответа. Повторяем проверку связи…';
+          feedback = 'connection_timeout';
           render();
         }
       });
+    }
+    item('PingNow').SetPanelEvent('onactivate', function () { send('status'); });
+    if (lab) {
+      item('LabStrategy').SetPanelEvent('onactivate', function () {
+        if (active) return;
+        labStrategy = { baseline: 'cached', cached: 'lean', lean: 'baseline' }[labStrategy];
+        labTiming = null;
+        send('status');
+      });
+      item('LabMeasure').SetPanelEvent('onactivate', function () { send('status'); });
     }
     item('Notifications').SetPanelEvent('onactivate', function () {
       if (active && activeAction !== 'status') return;
       if (!fullAccess()) return;
       notificationMode = { on: 'off', off: 'auto', auto: 'on' }[notificationMode];
-      renderMode();
+      pendingNotifications = true;
       send('notifications');
+    });
+    item('Language').SetPanelEvent('onactivate', function () {
+      languagePickerOpen = !languagePickerOpen;
+      render();
+    });
+    item('Close').SetPanelEvent('onactivate', function () {
+      languagePickerOpen = false;
+      item('NativeSettings').visible = false;
+      render();
+    });
+    Object.keys(languageChoices).forEach(function (choice) {
+      item(languageChoices[choice].button).SetPanelEvent('onactivate', function () {
+        if (active && activeAction !== 'status') return;
+        languagePickerOpen = false;
+        if (choice === language) { render(); return; }
+        language = pendingLanguage = choice;
+        send('language');
+      });
     });
     item('Bind').SetPanelEvent('onactivate', function () { send('bind'); });
     item('Test').SetPanelEvent('onactivate', function () { send('test'); });
@@ -329,37 +454,57 @@
       if (confirmingUnlink) send('unlink');
     });
     $.RegisterEventHandler('HTMLTitle', frame, function (_, title) {
-      var reply = /^native:(\d+):(offline|linked|unlinked):(\w+)(?::(\d+|none))?(?::(on|off|auto))?(?::(free|owner|test))?$/.exec(title);
+      var reply = /^native:(\d+):(offline|linked|unlinked|cached_linked|cached_unlinked):(\w+)(?::(\d+|none))?(?::(on|off|auto))?(?::(free|owner|test))?(?::(en|ru))?(?::lab,(\d+|none),(\d+|none),(\d+|none))?(?::pending,(0|1),(0|1))?$/.exec(title);
       if (!reply || Number(reply[1]) !== requestId) return false;
-      active = false;
-      activeAction = '';
-      accessTier = reply[6] || 'free';
-      if (reply[5]) { notificationMode = reply[5]; renderMode(); }
-      connected = reply[2] !== 'offline';
-      if (connected) linked = reply[2] === 'linked';
-      item('Connection').text = connected ? 'Сервер на связи' : 'Нет связи с сервером';
-      item('Ping').text = 'Отклик сервера: ' + (connected && reply[4] && reply[4] !== 'none' ? reply[4] + ' мс' : '—');
-      if (reply[3] === 'bound') item('Code').text = '';
-      var messages = { bound: 'Подключено', tested: 'Уведомление отправлено, задержка указана в Telegram', test_failed: 'Не удалось подтвердить уведомление или записать задержку. Повторите проверку.', unbound: 'Telegram отключён', rejected: 'Запрос отклонён. Проверьте код и привязку.' };
-      if (!connected) {
-        connectionError = true;
-        var failures = {
-          connection_storage: 'Не удалось открыть хранилище установки.',
-          connection_network: 'Не удалось получить ответ сервера.',
-          connection_response: 'Получен некорректный ответ сервера.',
-          connection_timeout: 'Сервер не ответил за 20 секунд.'
-        };
-        item('Feedback').text = failures[reply[3]] || 'Подключение повторится автоматически.';
+      if (reply[11] !== undefined) {
+        pendingLanguage = reply[11] === '1' ? reply[7] : '';
+        pendingNotifications = reply[12] === '1';
+      }
+      if (reply[2].indexOf('cached_') === 0) {
+        linked = reply[2] === 'cached_linked';
+        accessTier = reply[6] || 'free';
+        notificationMode = reply[5] || 'auto';
+        language = reply[7] || language;
+        if (reply[3] === 'saved') { active = false; activeAction = ''; }
+        rememberProfile();
         render();
         return false;
       }
-      if (connectionError) { item('Feedback').text = ''; connectionError = false; }
-      if (messages[reply[3]]) item('Feedback').text = messages[reply[3]];
+      if (lab && activeAction === 'status') {
+        labTiming = reply[2] === 'offline' ? null : {
+          total: Math.max(0, Date.now() - labStarted),
+          http: reply[8] && reply[8] !== 'none' ? Number(reply[8]) : null,
+          gateway: reply[9] && reply[9] !== 'none' ? Number(reply[9]) : null,
+          browser: reply[10] && reply[10] !== 'none' ? Number(reply[10]) : null
+        };
+        $.Msg('Telelock lab status [' + labStrategy + '] ' + (labTiming ? JSON.stringify(labTiming) : reply[3]));
+      }
+      active = false;
+      activeAction = '';
+      accessTier = reply[6] || 'free';
+      if (reply[5]) notificationMode = reply[5];
+      if (reply[11] === undefined && reply[2] !== 'offline' && (reply[3] === 'language' || reply[3] === 'language_failed' || reply[3] === 'synced'))
+        pendingLanguage = '';
+      if (reply[7] && !pendingLanguage) language = reply[7];
+      checked = true;
+      connected = reply[2] !== 'offline';
+      if (connected) linked = reply[2] === 'linked';
+      ping = connected && reply[4] && reply[4] !== 'none' ? reply[4] : null;
+      if (reply[3] === 'bound') item('Code').text = '';
+      rememberProfile();
+      if (!connected) {
+        connectionError = true;
+        feedback = reply[3].indexOf('connection_') === 0 ? reply[3] : 'connection_unknown';
+        render();
+        return false;
+      }
+      if (connectionError) { feedback = ''; connectionError = false; }
+      if (reply[3] !== 'status') feedback = reply[3];
       render();
       return false;
     });
     function refresh() {
-      send('status');
+      if (!active || !pendingLanguage) send(pendingLanguage ? 'language' : 'status');
       $.Schedule(12, refresh);
     }
     refresh();

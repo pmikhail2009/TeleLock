@@ -1,25 +1,57 @@
-<Panel id="KatkaNativeSettings" style="horizontal-align: center; vertical-align: center; width: 460px; padding: 24px; flow-children: down; background-color: #20221efa; border: 1px solid #96815c;">
-  <Label text="KATKA — уведомления о матче" style="font-size: 26px; font-weight: bold; color: #f3e6c7;" />
-  <Label id="KatkaConnection" text="Подключаемся к серверу…" style="margin-top: 8px; color: #c3bba7; font-size: 18px;" />
-  <Label id="KatkaPing" text="Отклик сервера: —" style="margin-top: 4px; color: #c3bba7; font-size: 17px;" />
-  <Label text="Доставка команды может занять больше времени." style="margin-top: 2px; color: #969180; font-size: 14px;" />
-  <TextButton id="KatkaNotifications" text="Оповещения: Авто" class="PopupButton" style="margin-top: 12px;" />
+<Panel id="KatkaNativeSettings" style="horizontal-align: center; vertical-align: center; width: 460px; padding: 24px; background-color: #20221efa; border: 1px solid #96815c;">
+ <Panel id="KatkaSettingsContent" style="width: 100%; flow-children: down;">
+  <Panel style="width: 100%; height: 36px;">
+    <Label id="KatkaHeading" text="Telelock — match alerts" style="vertical-align: center; width: 330px; font-size: 22px; font-weight: bold; color: #f3e6c7;" />
+    <TextButton id="KatkaClose" text="×" style="horizontal-align: right; vertical-align: center; width: 26px; height: 26px; color: #f3e6c7; font-size: 20px;" />
+    <Panel style="horizontal-align: right; vertical-align: center; margin-right: 30px; width: 34px; height: 26px; border: 1px solid #96815c; background-color: #34362e;">
+      <TextButton id="KatkaLanguage" text="" style="width: 100%; height: 100%;" />
+      <Panel id="KatkaFlagEn" hittest="false" hittestchildren="false" style="horizontal-align: center; vertical-align: center; width: 26px; height: 16px; overflow: clip; background-color: #012169;">
+        <Panel style="horizontal-align: center; vertical-align: center; width: 34px; height: 3px; background-color: #ffffff; transform: rotateZ(31deg);" />
+        <Panel style="horizontal-align: center; vertical-align: center; width: 34px; height: 3px; background-color: #ffffff; transform: rotateZ(-31deg);" />
+        <Panel style="horizontal-align: center; vertical-align: center; width: 34px; height: 1px; background-color: #c8102e; transform: rotateZ(31deg);" />
+        <Panel style="horizontal-align: center; vertical-align: center; width: 34px; height: 1px; background-color: #c8102e; transform: rotateZ(-31deg);" />
+        <Panel style="horizontal-align: center; width: 6px; height: 100%; background-color: #ffffff;" />
+        <Panel style="vertical-align: center; width: 100%; height: 6px; background-color: #ffffff;" />
+        <Panel style="horizontal-align: center; width: 3px; height: 100%; background-color: #c8102e;" />
+        <Panel style="vertical-align: center; width: 100%; height: 3px; background-color: #c8102e;" />
+      </Panel>
+      <Panel id="KatkaFlagRu" hittest="false" hittestchildren="false" visible="false" style="horizontal-align: center; vertical-align: center; width: 26px; height: 16px; flow-children: down;">
+        <Panel hittest="false" style="width: 100%; height: 5px; background-color: #ffffff;" />
+        <Panel hittest="false" style="width: 100%; height: 6px; background-color: #0039a6;" />
+        <Panel hittest="false" style="width: 100%; height: 5px; background-color: #d52b1e;" />
+      </Panel>
+    </Panel>
+  </Panel>
+  <Label id="KatkaConnection" text="Connecting to the server…" style="margin-top: 8px; color: #c3bba7; font-size: 18px;" />
+  <Panel style="flow-children: right; margin-top: 4px;">
+    <Label id="KatkaPing" text="Server latency: —" style="vertical-align: center; color: #c3bba7; font-size: 17px;" />
+    <TextButton id="KatkaPingNow" text="ping" style="vertical-align: center; margin-left: 8px; height: 24px; padding: 2px 0; color: #8dc5d6; font-size: 14px; text-decoration: underline; background-color: transparent; border: 0px solid transparent;" />
+  </Panel>
+  <Label id="KatkaLatencyHint" text="Commands can take longer to reach the game." style="margin-top: 2px; color: #969180; font-size: 14px;" />
+  <TextButton id="KatkaNotifications" text="Notifications: Auto" class="PopupButton" style="margin-top: 12px;" />
+  <TextButton id="KatkaTelegramBot" text="Open Telegram bot" class="PopupButton" style="margin-top: 8px;"
+    onactivate="ExternalBrowserGoToURL( 'https://t.me/katkaV2_bot' )" />
   <Panel id="KatkaPair" style="flow-children: down; width: 100%; margin-top: 16px;">
-    <Label text="Код из Telegram" style="font-size: 18px; color: #ece3ce;" />
+    <Label id="KatkaCodeLabel" text="Telegram code" style="font-size: 18px; color: #ece3ce;" />
     <TextEntry id="KatkaCode" maxchars="16" style="width: 100%; height: 42px; padding: 6px; background-color: #151813; color: #fff4cb; font-size: 22px;" />
-    <TextButton id="KatkaBind" text="Подключить" class="PopupButton" style="margin-top: 10px;" />
+    <TextButton id="KatkaBind" text="Connect" class="PopupButton" style="margin-top: 10px;" />
   </Panel>
   <Panel id="KatkaLinked" visible="false" style="flow-children: down; margin-top: 16px;">
-    <Label text="Telegram подключён" style="color: #acd8ad; font-size: 18px;" />
-    <TextButton id="KatkaTest" text="Проверить уведомление" class="PopupButton" style="margin-top: 8px;" />
-    <TextButton id="KatkaUnlink" text="Отключить Telegram" class="PopupButton" style="margin-top: 8px;" />
+    <Label id="KatkaLinkedLabel" text="Telegram connected" style="color: #acd8ad; font-size: 18px;" />
+    <TextButton id="KatkaTest" text="Send a test notification" class="PopupButton" style="margin-top: 8px;" />
+    <TextButton id="KatkaUnlink" text="Disconnect Telegram" class="PopupButton" style="margin-top: 8px;" />
     <Panel id="KatkaUnlinkConfirm" visible="false" style="flow-children: down; margin-top: 8px;">
-      <Label text="Отключить Telegram? Уведомления и управление через бота перестанут работать." style="color: #efcf9f; font-size: 17px; width: 100%;" />
+      <Label id="KatkaUnlinkPrompt" text="Disconnect Telegram? Bot controls and match alerts will stop." style="color: #efcf9f; font-size: 17px; width: 100%;" />
       <Panel style="flow-children: right; margin-top: 8px;">
-        <TextButton id="KatkaUnlinkYes" text="Да, отключить" class="PopupButton" />
-        <TextButton id="KatkaUnlinkNo" text="Отмена" class="PopupButton" style="margin-left: 8px;" />
+        <TextButton id="KatkaUnlinkYes" text="Disconnect" class="PopupButton" />
+        <TextButton id="KatkaUnlinkNo" text="Cancel" class="PopupButton" style="margin-left: 8px;" />
       </Panel>
     </Panel>
   </Panel>
   <Label id="KatkaFeedback" style="margin-top: 8px; font-size: 17px; color: #efcf9f;" />
+ </Panel>
+ <Panel id="KatkaLanguagePicker" visible="false" style="horizontal-align: right; margin-top: 34px; margin-right: 30px; width: 156px; padding: 5px; flow-children: down; background-color: #282a24; border: 1px solid #96815c; z-index: 10;">
+   <TextButton id="KatkaLanguageEn" text="✓ English" class="PopupButton" style="width: 100%; height: 32px; font-size: 16px;" />
+   <TextButton id="KatkaLanguageRu" text="Русский" class="PopupButton" style="width: 100%; height: 32px; font-size: 16px; margin-top: 3px;" />
+ </Panel>
 </Panel>

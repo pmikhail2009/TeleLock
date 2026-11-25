@@ -27,7 +27,7 @@ def skip_old_updates():
 
 def commands_help():
     return (
-        "Команды:\n"
+        "Telelock — команды:\n"
         "/play_normal - Обычный режим\n"
         "/play_ranked - Ранговый режим\n"
         "/play_street - Уличная стычка\n"

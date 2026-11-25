@@ -14,6 +14,6 @@ export async function servePanel(res) {
     res.end(html);
   } catch {
     res.writeHead(503);
-    res.end('KATKA panel unavailable');
+    res.end('Telelock panel unavailable');
   }
 }

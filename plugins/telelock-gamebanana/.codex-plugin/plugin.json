@@ -1,0 +1,11 @@
+{
+  "name": "telelock-gamebanana",
+  "version": "0.1.1",
+  "description": "Упаковывает VPK Telelock и публикует обновления на GameBanana через браузер Codex.",
+  "skills": "./skills",
+  "interface": {
+    "displayName": "Telelock для GameBanana",
+    "shortDescription": "Публикация обновлений Telelock",
+    "category": "Developer Tools"
+  }
+}

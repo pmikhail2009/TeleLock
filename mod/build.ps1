@@ -3,11 +3,12 @@ param(
     [Parameter(Mandatory)][string]$GameDirectory,
     [Parameter(Mandatory)][string]$Viewer,
     [Parameter(Mandatory)][string]$Modlock,
-    [string]$EscapeMenuArchive,
     [ValidateRange(0,99)][int]$PackageNumber = 1,
-    [switch]$DiagnosticOnly
+    [switch]$DiagnosticOnly,
+    [switch]$Lab
 )
 $ErrorActionPreference = 'Stop'
+if ($Lab -and $DiagnosticOnly) { throw 'Lab requires the regular matchmaking transport' }
 if ($PanelUrl.Scheme -ne 'https' -or $PanelUrl.Query -or $PanelUrl.Fragment -or $PanelUrl.UserInfo) { throw 'Expected an HTTPS panel URL without query or fragment' }
 $repo = Split-Path -Parent $PSScriptRoot
 $stage = Join-Path $repo ('mod/build/' + [guid]::NewGuid())
@@ -16,60 +17,77 @@ $scripts = New-Item -ItemType Directory -Path "$stage/content/panorama/scripts" 
 $package = New-Item -ItemType Directory -Path "$stage/package" -Force
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 $stock = Join-Path $GameDirectory 'game/citadel/pak01_dir.vpk'
-foreach ($item in @(
-    @('hud_escape_menu','CitadelHudEscapeMenu','KatkaSettings','width: 2px; height: 2px; opacity: 0.01; visibility: visible;'),
-    @('base_dashboard','Panel','KatkaCommands','width: 2px; height: 2px; opacity: 0.01; visibility: visible;')
-)) {
-    $name,$rootTag,$frameId,$style = $item
-    $source = Join-Path $stage ($name+'.xml')
-    $archive = $stock
-    if ($name -eq 'hud_escape_menu' -and $EscapeMenuArchive) { $archive = $EscapeMenuArchive }
-    & $Viewer -i $archive -d -f "panorama/layout/$name.vxml_c" -o $source | Out-Null
-    if ($LASTEXITCODE -or !(Test-Path -LiteralPath $source -PathType Leaf)) { throw "Could not extract $name" }
-    $doc = New-Object xml
-    $doc.PreserveWhitespace = $true
-    $doc.Load($source)
-    $parent = $doc.SelectSingleNode("/root/$rootTag")
-    if (!$parent) { throw "Changed layout root: $name" }
-    $includes = $doc.SelectSingleNode('/root/scripts')
-    if (!$includes) { $includes = $doc.CreateElement('scripts'); [void]$parent.ParentNode.InsertBefore($includes,$parent) }
-    $include = $doc.CreateElement('include')
-    $include.SetAttribute('src','s2r://panorama/scripts/katka.vjs')
-    [void]$includes.AppendChild($include)
-    $frame = $doc.CreateElement('CitadelHTMLPanel')
-    $frame.SetAttribute('id',$frameId)
-    $frame.SetAttribute('style',$style)
-    if ($frameId -eq 'KatkaSettings') {
-        $placeholder = New-Object xml
-        $placeholder.Load((Join-Path $PSScriptRoot 'panorama/settings.xml'))
-        if ($DiagnosticOnly) {
-            $probeButton = $placeholder.CreateElement('TextButton')
-            $probeButton.SetAttribute('id','KatkaDiagnose')
-            $probeButton.SetAttribute('text','Проверить управление без поиска')
-            $probeButton.SetAttribute('class','PopupButton')
-            $probeButton.SetAttribute('style','margin-top: 8px;')
-            [void]$placeholder.DocumentElement.AppendChild($probeButton)
-        }
-        [void]$parent.AppendChild($doc.ImportNode($placeholder.DocumentElement,$true))
-    }
-    $frame.SetAttribute('hittest','false'); $frame.SetAttribute('acceptsfocus','false')
-    [void]$parent.AppendChild($frame)
-    if ($frameId -eq 'KatkaCommands') {
-        if ($DiagnosticOnly) {
-            $diagnostic = $doc.CreateElement('Label')
-            $diagnostic.SetAttribute('id','KatkaCommandDiagnostics')
-            $diagnostic.SetAttribute('style','horizontal-align: left; vertical-align: bottom; margin: 16px; width: 850px; color: #fff4cb; font-size: 17px; background-color: #20221efa; padding: 8px; z-index: 999;')
-            [void]$parent.AppendChild($diagnostic)
-        }
-        $reporter = $frame.CloneNode($false)
-        $reporter.SetAttribute('id','KatkaMatchReport')
-        [void]$parent.AppendChild($reporter)
-        $commandReporter = $frame.CloneNode($false)
-        $commandReporter.SetAttribute('id','KatkaCommandReport')
-        [void]$parent.AppendChild($commandReporter)
-    }
-    [IO.File]::WriteAllText((Join-Path $layout.FullName ($name+'.xml')), $doc.OuterXml, $utf8)
+$dashboardSource = Join-Path $stage 'base_dashboard.xml'
+& $Viewer -i $stock -d -f 'panorama/layout/base_dashboard.vxml_c' -o $dashboardSource | Out-Null
+if ($LASTEXITCODE -or !(Test-Path -LiteralPath $dashboardSource -PathType Leaf)) { throw 'Could not extract dashboard' }
+$dashboard = New-Object xml
+$dashboard.Load($dashboardSource)
+$parent = $dashboard.SelectSingleNode('/root/Panel')
+if (!$parent) { throw 'Changed dashboard layout root' }
+$includes = $dashboard.SelectSingleNode('/root/scripts')
+if (!$includes) {
+    $includes = $dashboard.CreateElement('scripts')
+    [void]$parent.ParentNode.InsertBefore($includes,$parent)
 }
+$include = $dashboard.CreateElement('include')
+$include.SetAttribute('src','s2r://panorama/scripts/katka.vjs')
+[void]$includes.AppendChild($include)
+$transportStyle = 'width: 2px; height: 2px; opacity: 0.01; visibility: visible;'
+foreach ($id in 'KatkaCommands','KatkaMatchReport','KatkaCommandReport') {
+    $frame = $dashboard.CreateElement('CitadelHTMLPanel')
+    $frame.SetAttribute('id',$id)
+    $frame.SetAttribute('style',$transportStyle)
+    $frame.SetAttribute('hittest','false')
+    $frame.SetAttribute('acceptsfocus','false')
+    [void]$parent.AppendChild($frame)
+}
+if ($DiagnosticOnly) {
+    $diagnostic = $dashboard.CreateElement('Label')
+    $diagnostic.SetAttribute('id','KatkaCommandDiagnostics')
+    $diagnostic.SetAttribute('style','horizontal-align: left; vertical-align: bottom; margin: 16px; width: 850px; color: #fff4cb; font-size: 17px; background-color: #20221efa; padding: 8px; z-index: 999;')
+    [void]$parent.AppendChild($diagnostic)
+}
+[IO.File]::WriteAllText((Join-Path $layout.FullName 'base_dashboard.xml'), $dashboard.OuterXml, $utf8)
+
+$hudSource = Join-Path $stage 'base_hud.xml'
+& $Viewer -i $stock -d -f 'panorama/layout/base_hud.vxml_c' -o $hudSource | Out-Null
+if ($LASTEXITCODE -or !(Test-Path -LiteralPath $hudSource -PathType Leaf)) { throw 'Could not extract HUD' }
+$hud = New-Object xml
+$hud.Load($hudSource)
+$hudRoot = $hud.SelectSingleNode('/root/Panel[CitadelHud[@id="Hud"]]')
+if (!$hudRoot) { throw 'Changed HUD layout root' }
+$hudIncludes = $hud.SelectSingleNode('/root/scripts')
+if (!$hudIncludes) {
+    $hudIncludes = $hud.CreateElement('scripts')
+    [void]$hudRoot.ParentNode.InsertBefore($hudIncludes,$hudRoot)
+}
+$hudInclude = $hud.CreateElement('include')
+$hudInclude.SetAttribute('src','s2r://panorama/scripts/telelock_menu.vjs')
+[void]$hudIncludes.AppendChild($hudInclude)
+[IO.File]::WriteAllText((Join-Path $layout.FullName 'base_hud.xml'), $hud.OuterXml, $utf8)
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'panorama/scripts/telelock_menu.js') -Destination $scripts.FullName
+
+$settings = New-Object xml
+$settings.LoadXml('<root><styles><include src="s2r://panorama/styles/citadel_base_styles.vcss" /></styles><scripts><include src="s2r://panorama/scripts/katka.vjs" /></scripts><Panel style="width: 100%; height: 100%;" hittest="false"><CitadelHTMLPanel id="KatkaSettings" hittest="false" acceptsfocus="false" /></Panel></root>')
+$settings.SelectSingleNode('//*[@id="KatkaSettings"]').SetAttribute('style',$transportStyle)
+$placeholder = New-Object xml
+$placeholder.Load((Join-Path $PSScriptRoot 'panorama/settings.xml'))
+if ($Lab) {
+    $labLayout = New-Object xml
+    $labLayout.Load((Join-Path $PSScriptRoot 'panorama/lab.xml'))
+    $content = $placeholder.SelectSingleNode('//*[@id="KatkaSettingsContent"]')
+    [void]$content.InsertAfter($placeholder.ImportNode($labLayout.DocumentElement,$true), $content.SelectSingleNode('./Label[@id="KatkaLatencyHint"]'))
+}
+if ($DiagnosticOnly) {
+    $probeButton = $placeholder.CreateElement('TextButton')
+    $probeButton.SetAttribute('id','KatkaDiagnose')
+    $probeButton.SetAttribute('text','Проверить управление без поиска')
+    $probeButton.SetAttribute('class','PopupButton')
+    $probeButton.SetAttribute('style','margin-top: 8px;')
+    [void]$placeholder.SelectSingleNode('//*[@id="KatkaSettingsContent"]').AppendChild($probeButton)
+}
+[void]$settings.SelectSingleNode('/root/Panel').AppendChild($settings.ImportNode($placeholder.DocumentElement,$true))
+[IO.File]::WriteAllText((Join-Path $layout.FullName 'telelock_settings.xml'), $settings.OuterXml, $utf8)
 $rosterSource = Join-Path $stage 'roster.xml'
 & $Viewer -i $stock -d -f 'panorama/layout/popups/citadel_popup_roster_select.vxml_c' -o $rosterSource | Out-Null
 if ($LASTEXITCODE -or !(Test-Path -LiteralPath $rosterSource)) { throw 'Could not extract roster popup' }
@@ -102,6 +120,7 @@ $popups = New-Item -ItemType Directory -Path "$stage/content/panorama/layout/pop
 [IO.File]::WriteAllText((Join-Path $popups.FullName 'citadel_popup_roster_select.xml'), $roster.OuterXml, $utf8)
 $js = [IO.File]::ReadAllText((Join-Path $repo 'mod/panorama/scripts/katka.js'))
 $diagnosticLiteral = if ($DiagnosticOnly) { '"true"' } else { '"false"' }
+$js = $js.Replace('"KATKA_LAB"', $(if ($Lab) { '"true"' } else { '"false"' }))
 $js = $js.Replace('"KATKA_DIAGNOSTIC_ONLY"',$diagnosticLiteral).Replace('"KATKA_PANEL_URL"',(ConvertTo-Json $PanelUrl.AbsoluteUri -Compress))
 [IO.File]::WriteAllText((Join-Path $scripts.FullName 'katka.js'), $js, $utf8)
 $rosterJs = [IO.File]::ReadAllText((Join-Path $repo 'mod/panorama/scripts/katka_roster.js')).Replace('"KATKA_DIAGNOSTIC_ONLY"',$diagnosticLiteral).Replace('"KATKA_PANEL_URL"',(ConvertTo-Json $PanelUrl.AbsoluteUri -Compress))
@@ -130,7 +149,7 @@ $stateJs = [IO.File]::ReadAllText((Join-Path $repo 'mod/panorama/scripts/katka_q
 [IO.File]::WriteAllText((Join-Path $layout.FullName 'citadel_matchmaking_status.xml'), $queue.OuterXml, $utf8)
 $pak = Join-Path $package.FullName ('pak{0:D2}_dir.vpk' -f $PackageNumber)
 $compiled = Join-Path $stage 'compiled.vpk'
-& $Modlock panorama compile --addon katka --output $compiled "$stage/content"
+& $Modlock panorama compile --addon telelock --output $compiled "$stage/content"
 if ($LASTEXITCODE) { throw 'Panorama compilation failed' }
 # Modlock emits a single-file VPK v1. Its directory entries use offsets
 # relative to the data section, so the section can be copied into a v2 file.
@@ -159,7 +178,8 @@ try {
 $verification = & $Viewer -i $pak --vpk_verify 2>&1
 if ($LASTEXITCODE -or !($verification -match '^Success\.$')) { throw "VPK verification failed: $verification" }
 $listing = & $Viewer -i $pak -l
-foreach ($asset in 'layout/hud_escape_menu.vxml_c','layout/base_dashboard.vxml_c','layout/popups/citadel_popup_roster_select.vxml_c','layout/citadel_matchmaking_status.vxml_c','scripts/katka.vjs_c','scripts/katka_roster.vjs_c','scripts/katka_queue_state.vjs_c') {
+if ($listing -match '^panorama/layout/hud_escape_menu\.vxml_c\b') { throw 'Telelock must not replace the escape menu' }
+foreach ($asset in 'layout/telelock_settings.vxml_c','layout/base_dashboard.vxml_c','layout/base_hud.vxml_c','layout/popups/citadel_popup_roster_select.vxml_c','layout/citadel_matchmaking_status.vxml_c','scripts/telelock_menu.vjs_c','scripts/katka.vjs_c','scripts/katka_roster.vjs_c','scripts/katka_queue_state.vjs_c') {
     if (!($listing -match [regex]::Escape("panorama/$asset"))) { throw "Missing resource: $asset" }
 }
 Write-Output $pak

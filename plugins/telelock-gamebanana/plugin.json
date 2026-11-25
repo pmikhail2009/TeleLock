@@ -1,0 +1,15 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "telelock-gamebanana",
+  "version": "0.1.1",
+  "description": "Упаковывает VPK Telelock и публикует обновления на GameBanana через браузер Codex.",
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Telelock для GameBanana",
+        "shortDescription": "Публикация обновлений Telelock",
+        "category": "Developer Tools"
+      }
+    }
+  }
+}

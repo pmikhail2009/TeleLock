@@ -20,8 +20,8 @@ test('test latency uses the game clock through Telegram confirmation, excluding 
 
 test('unconfirmed send does not publish a fabricated delay',async()=>{
   let calls=0;
-  const sandbox={performance:{now:()=>100},api:async()=>{calls++;return {delivery:'unknown'};}};
+  const sandbox={t:en=>en,performance:{now:()=>100},api:async()=>{calls++;return {delivery:'unknown'};}};
   vm.runInNewContext(source,sandbox);
-  await assert.rejects(()=>sandbox.testNotification('owner'),/не подтвердил/);
+  await assert.rejects(()=>sandbox.testNotification('owner'),/did not confirm/);
   assert.equal(calls,1);
 });

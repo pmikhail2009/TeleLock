@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
-import { labels, keyboard } from '../tgcloud/lib/controls.js';
+import { feedbackPrompt, labels, keyboard } from '../tgcloud/lib/controls.js';
 import { Pairing, default as worker } from '../../gateway/worker.mjs';
 
-async function fixture({ linked = true, stale = false, offline = false, tier = 'test' } = {}) {
+async function fixture({ linked = true, stale = false, offline = false, tier = 'test', language, directory } = {}) {
   const sent = [], calls = [];
   const context = vm.createContext({ Date, JSON, Number, Object, Error });
   const generation = 'a'.repeat(32);
@@ -16,9 +17,19 @@ async function fixture({ linked = true, stale = false, offline = false, tier = '
         const body = JSON.parse(options.body);
         calls.push({ url, body });
         if (offline) throw new Error('Offline');
-        if (url.endsWith('/status')) return Response.json({ generation: linked && !stale ? generation : null, tier });
+        const action = url.split('/').at(-1);
+        if (directory && ['access', 'status', 'stats'].includes(action)) {
+          return directory.fetch(new Request(url, { method: 'POST', body: JSON.stringify({ action, owner: body.owner, update: body }) }));
+        }
+        if (url.endsWith('/status')) return Response.json({ generation: linked && !stale ? generation : null, tier, language });
         if (url.endsWith('/offer')) return Response.json({ ok: true });
-        if (url.endsWith('/command')) return Response.json({ reply: { chat_id: body.message.chat.id, text: 'В очереди.' } });
+        if (url.endsWith('/feedback')) {
+          if (body.operation === 'list') return tier === 'free'
+            ? Response.json({language,denied:true},{status:403})
+            : Response.json({language,counts:[0,0,0,1,1],texts:['A useful review'],next:null});
+          return Response.json({language,saved:body.operation === 'write'});
+        }
+        if (url.endsWith('/command')) return Response.json({ reply: { chat_id: body.message.chat.id, text: 'Command accepted.' } });
         throw new Error('Unexpected URL: ' + url);
       });
     }, { context }),
@@ -42,18 +53,97 @@ async function fixture({ linked = true, stale = false, offline = false, tier = '
   return { invoke, sent, calls };
 }
 
-test('connected /start and mode picker never queue a search', async () => {
+test('main menu groups settings and game actions without queueing a search', async () => {
   const f = await fixture();
   await f.invoke('/start');
-  assert.ok(f.sent[0].reply_markup.keyboard.flat().includes(labels.modes));
+  assert.deepEqual(Array.from(f.sent[0].reply_markup.keyboard.flat()), [labels.play, labels.control, labels.pro, 'test']);
+  await f.invoke(labels.play);
+  assert.deepEqual(Array.from(f.sent.at(-1).reply_markup.keyboard, row => Array.from(row)),
+    [[labels.normal, labels.ranked, labels.street], [labels.cancel, labels.watch], [labels.back]]);
+  assert.match(f.sent.at(-1).text, /start matchmaking/);
   await f.invoke(labels.modes);
-  assert.ok(f.sent[1].reply_markup.keyboard.flat().includes(labels.normal));
-  assert.match(f.sent[1].text, /запустит поиск/);
+  assert.ok(f.sent.at(-1).reply_markup.keyboard.flat().includes(labels.normal));
+  for (const back of [labels.back, '↩️ Main menu', '↩️ Управление']) {
+    await f.invoke(back);
+    assert.ok(f.sent.at(-1).reply_markup.keyboard.flat().includes(labels.play));
+  }
+  await f.invoke(labels.control);
+  assert.deepEqual(Array.from(f.sent.at(-1).reply_markup.keyboard.flat()),
+    [labels.language, labels.code, labels.settings, labels.feedback, labels.help, labels.back]);
   assert.equal(f.calls.filter(c => !c.url.endsWith('/status')).length, 0);
+});
+
+test('signing into each staff role shows the shared menu in Russian with only its role button added', async () => {
+  const hash = text => createHash('sha256').update(text).digest('hex');
+  const directory = new Pairing({ storage: storage([['ownerVersion:202', 1], ['feedback:launches:202', 5]]) }, {
+    KATKA_OWNER_PASSWORD_HASH: hash('personal'), KATKA_TEST_PASSWORD_HASH: hash('shared'),
+  });
+  const f = await fixture({ linked: false, directory });
+  await f.invoke('/menu');
+  assert.deepEqual(Array.from(f.sent.at(-1).reply_markup.keyboard.flat()), [labels.play, labels.control, labels.pro]);
+  let messageId = 1;
+  for (const [password, role, other] of [['personal', 'admin', 'test'], ['shared', 'test', 'admin']]) {
+    await f.invoke(password, { message_id: messageId++ });
+    assert.match(f.sent.at(-1).text, new RegExp('Режим ' + role + ' включён'));
+    assert.deepEqual(Array.from(f.sent.at(-1).reply_markup.keyboard.flat()),
+      ['🎮 Играть', '⚙️ Центр управления', '⭐ Перейти на Pro', role]);
+    await f.invoke(role);
+    const staffButtons = ['⭐ Оценки и отзывы', '↩️ Назад'];
+    if (role === 'admin') staffButtons.unshift('📊 Статистика Telelock');
+    assert.deepEqual(Array.from(f.sent.at(-1).reply_markup.keyboard.flat()), staffButtons);
+    await f.invoke('📊 Статистика Telelock');
+    if (role === 'admin') {
+      assert.match(f.sent.at(-1).text, /Подключили Deadlock к Telegram: 1\nЗапустили поиск через бота: 1/);
+    } else {
+      assert.match(f.sent.at(-1).text, /доступна в режиме admin/);
+    }
+    await f.invoke(other);
+    assert.match(f.sent.at(-1).text, /соответствующей служебной ролью/);
+    await f.invoke(password, { message_id: messageId++ });
+    assert.deepEqual(Array.from(f.sent.at(-1).reply_markup.keyboard.flat()),
+      ['🎮 Играть', '⚙️ Центр управления', '⭐ Перейти на Pro']);
+  }
+});
+
+test('language menu works before pairing and accepts labels from either keyboard', async () => {
+  const f = await fixture({linked:false, tier:'free', language:'ru'});
+  await f.invoke(labels.control);
+  assert.ok(f.sent[0].reply_markup.keyboard.flat().includes('🌐 Язык'));
+  for (const label of [labels.language, '🌐 Язык', '/language']) {
+    await f.invoke(label);
+    assert.match(f.sent.at(-1).text, /Выберите язык/);
+    const options = f.sent.at(-1).reply_markup.inline_keyboard[0];
+    assert.equal(options[0].callback_data, 'language:en');
+    assert.equal(options[1].text, '✓ Русский');
+  }
+  assert.ok(f.calls.every(call => call.url.endsWith('/status')));
+});
+
+test('any user can rate or reply with written feedback before pairing', async () => {
+  const f = await fixture({ linked:false, tier:'free', language:'en' });
+  await f.invoke(labels.feedback);
+  assert.match(f.sent[0].text,/I’m Mikhail/);
+  assert.deepEqual(Array.from(f.sent[0].reply_markup.inline_keyboard[0], button=>button.text), ['1','2','3','4','5']);
+  await f.invoke('It found my match in time.', {reply_to_message:{from:{is_bot:true},text:feedbackPrompt('en')}});
+  assert.equal(f.calls[1].body.operation,'write');
+  assert.equal(f.calls[1].body.text,'It found my match in time.');
+  assert.match(f.sent.at(-1).text,/Thank you/);
+  assert.equal(f.calls.every(call=>call.url.endsWith('/feedback')),true);
+});
+
+test('the ratings menu shows staff results and denies free users', async () => {
+  const staff = await fixture({tier:'test'});
+  await staff.invoke(labels.reviews);
+  assert.match(staff.sent[0].text,/4\.50 \/ 5/);
+  assert.match(staff.sent[0].text,/A useful review/);
+  const free = await fixture({tier:'free',language:'ru'});
+  await free.invoke('/reviews');
+  assert.match(free.sent[0].text,/нужен тестовый или админ-доступ/);
 });
 
 test('each control button maps to its canonical command for its own owner (mock only)', async () => {
   for (const [label, command] of [[labels.normal, '/play_normal'], [labels.ranked, '/play_ranked'],
+    ['▶️ Обычный поиск', '/play_normal'], ['▶️ Ranked matchmaking', '/play_ranked'],
     [labels.street, '/play_street'], [labels.cancel, '/cancel'], [labels.watch, '/watch_black']]) {
     const f = await fixture();
     await f.invoke(label);
@@ -70,7 +160,7 @@ test('unlinked and stale bindings cannot send game controls', async () => {
     const f = await fixture(options);
     await f.invoke(labels.normal);
     assert.ok(!f.calls.some(c => c.url.endsWith('/command')));
-    assert.deepEqual(Array.from(f.sent[0].reply_markup.keyboard.flat()), keyboard(false).keyboard.flat());
+    assert.deepEqual(Array.from(f.sent[0].reply_markup.keyboard.flat()), keyboard(false, 'home', 'test').keyboard.flat());
   }
 });
 
@@ -84,37 +174,63 @@ test('group messages and mismatched sender IDs are ignored', async () => {
 
 test('status, back and help are read-only; /code still returns promptly', async () => {
   const f = await fixture();
-  for (const label of [labels.status, labels.back, labels.help, labels.code]) await f.invoke(label);
+  for (const label of ['/status', '📡 Что сейчас?', labels.back, labels.help, labels.code]) await f.invoke(label);
   assert.ok(!f.calls.some(c => c.url.endsWith('/command') || c.url.endsWith('/wait')));
-  assert.match(f.sent.at(-1).text, /Код KATKA: B{16}/);
-  assert.ok(f.sent.at(-1).reply_markup.keyboard.flat().includes(labels.modes));
+  assert.match(f.sent.at(-1).text, /Telelock code: B{16}/);
+  assert.ok(f.sent.at(-1).reply_markup.keyboard.flat().includes(labels.code));
 });
 
 test('temporary outage produces a useful reply and never queues a command', async () => {
   const f = await fixture({ offline: true });
   await f.invoke(labels.normal);
-  assert.match(f.sent[0].text, /сервис временно недоступен/);
+  assert.match(f.sent[0].text, /service is temporarily unavailable/);
   assert.ok(!f.calls.some(c => c.url.endsWith('/command')));
 });
 
 test('free keyboard and manual commands expose only starting modes and auto notifications', async () => {
   const f = await fixture({tier:'free'});
-  await f.invoke('/menu');
-  const buttons=f.sent[0].reply_markup.keyboard.flat();
-  assert.ok(buttons.includes(labels.modes));
-  for(const label of [labels.cancel,labels.watch,labels.status]) assert.ok(!buttons.includes(label));
+  await f.invoke(labels.play);
+  assert.deepEqual(Array.from(f.sent[0].reply_markup.keyboard, row => Array.from(row)),
+    [[labels.normal, labels.ranked], [labels.street], [labels.back]]);
   for(const action of ['/cancel','/watch_black','/status']) {
     await f.invoke(action);
-    assert.match(f.sent.at(-1).text,/бесплатной/);
+    assert.match(f.sent.at(-1).text,/free version/);
   }
   assert.ok(!f.calls.some(call=>call.url.endsWith('/command')));
   await f.invoke(labels.normal);
   assert.equal(f.calls.at(-1).body.message.text,'/play_normal');
 });
 
+test('unpaired users can open the Pro offer without claiming the trial', async () => {
+  const f = await fixture({ linked: false, tier: 'free' });
+  await f.invoke('/menu');
+  assert.ok(f.sent.at(-1).reply_markup.keyboard.flat().includes(labels.pro));
+  await f.invoke(labels.pro);
+  const payment = f.sent.at(-1).reply_markup.inline_keyboard[0][0];
+  assert.equal(payment.text, 'Continue to payment');
+  assert.equal(payment.callback_data, 'pro:pay');
+  assert.ok(f.calls.every(call => call.url.endsWith('/status')));
+});
+
+test('Pro enables game and notification controls without exposing staff reviews', async () => {
+  const f = await fixture({ tier: 'pro' });
+  await f.invoke('/menu');
+  assert.deepEqual(Array.from(f.sent.at(-1).reply_markup.keyboard.flat()), [labels.play, labels.control, labels.pro]);
+  await f.invoke(labels.play);
+  assert.deepEqual(Array.from(f.sent.at(-1).reply_markup.keyboard.at(-1)), [labels.back]);
+  assert.ok(f.sent.at(-1).reply_markup.keyboard.flat().includes(labels.cancel));
+  await f.invoke(labels.cancel);
+  assert.equal(f.calls.at(-1).body.message.text, '/cancel');
+  await f.invoke(labels.control);
+  const buttons = f.sent.at(-1).reply_markup.keyboard.flat();
+  assert.ok(buttons.includes(labels.settings));
+  assert.ok(!buttons.includes(labels.reviews));
+});
+
 function storage(entries) {
   const data = new Map(entries);
   const store = { get: async k => data.get(k), put: async (k,v) => data.set(k,v),
+    list: async ({ prefix }) => new Map([...data].filter(([key]) => key.startsWith(prefix))),
     transaction: async fn => fn(store) };
   return store;
 }

@@ -1,0 +1,20 @@
+{
+  "name": "telelock-local",
+  "interface": {
+    "displayName": "Telelock"
+  },
+  "plugins": [
+    {
+      "name": "telelock-gamebanana",
+      "source": {
+        "source": "local",
+        "path": "./telelock-gamebanana"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

@@ -1,19 +1,22 @@
-import { experience, modeNames } from './experience.mjs';
+import { experience } from './experience.mjs';
+import { feedback } from './feedback.mjs';
 import { completePairing } from './tgcloud-runtime.mjs';
-import { keyboard, restrictedText } from '../serverless/tgcloud/lib/controls.js';
+import { keyboard, localize, modeNames, restrictedText, helpText } from '../serverless/tgcloud/lib/controls.js';
 
-import { fullAccess, allowedCommand } from './access.mjs';
+import { fullAccess, staffAccess, allowedCommand } from './access.mjs';
 
+const panelOrigin = 'https://pmikhail2009.github.io';
 const encoder = new TextEncoder();
+const proTrialDuration = 7 * 24 * 60 * 60 * 1000;
 const commands = ['/play_normal', '/play_ranked', '/play_street', '/cancel', '/watch_black'];
-const help = '/code — подключить Telegram\n/play_normal — обычный режим\n/play_ranked — ранговый режим\n/play_street — уличная стычка\n/cancel — отменить поиск\n/watch_black — включить наблюдение';
+const statusExperiments = ['baseline', 'cached', 'lean'];
 const resultMessages = {
-  queued: '🔎 Поиск матча начат в Deadlock.',
-  cancelled: '⏹ Поиск матча отменён.',
-  watching: '👀 Наблюдение за найденным матчем включено.',
-  already_open: 'Поиск не запущен: выбор героев уже открыт. Закройте его и отправьте команду заново.',
-  failed: 'Не удалось выполнить команду в Deadlock. Проверьте доступность режима и выбранных героев.',
-  unconfirmed: 'Игра не подтвердила выполнение команды. Проверьте состояние Deadlock.',
+  queued: ['🔎 Matchmaking started in Deadlock.', '🔎 Поиск матча начат в Deadlock.'],
+  cancelled: ['⏹ Matchmaking cancelled.', '⏹ Поиск матча отменён.'],
+  watching: ['👀 Match monitoring is on.', '👀 Наблюдение за найденным матчем включено.'],
+  already_open: ['The hero picker is already open. Close it and send the command again.', 'Поиск не запущен: выбор героев уже открыт. Закройте его и отправьте команду заново.'],
+  failed: ['Deadlock could not perform the command. Check the mode and selected heroes.', 'Не удалось выполнить команду в Deadlock. Проверьте доступность режима и выбранных героев.'],
+  unconfirmed: ['The game did not confirm the command. Check Deadlock.', 'Игра не подтвердила выполнение команды. Проверьте состояние Deadlock.'],
 };
 
 function allowedResult(action, status) {
@@ -30,16 +33,59 @@ async function fingerprint(value) {
 
 export class Pairing {
   constructor(state, env) {
+    this.state = state;
     this.storage = state.storage;
     this.accessEnv = env;
     this.botToken = env.KATKA_BOT_TOKEN;
   }
 
   async tier(owner, storage = this.storage) {
-    return owner ? (await storage.get('access:' + owner))?.tier || 'free' : 'free';
+    if (!owner) return 'free';
+    const role = (await storage.get('access:' + owner))?.tier;
+    if (staffAccess(role)) return role;
+    return (await storage.get('proTrial:' + owner)) > Date.now() ? 'pro' : 'free';
+  }
+
+  async claimProTrial(owner) {
+    if (!Number.isSafeInteger(owner) || owner <= 0)
+      return Response.json({ error: 'Invalid account.' }, { status: 400 });
+    const language = await this.language(owner);
+    const state = await this.storage.transaction(async tx => {
+      if (staffAccess((await tx.get('access:' + owner))?.tier)) return 'staff';
+      const key = 'proTrial:' + owner;
+      const expires = await tx.get(key);
+      const now = Date.now();
+      if (expires !== undefined) return expires > now ? 'active' : 'expired';
+      await tx.put(key, now + proTrialDuration);
+      return 'granted';
+    });
+    return Response.json({ language, state });
+  }
+
+  async usageStats(owner) {
+    const language = await this.language(owner);
+    if (await this.tier(owner) !== 'owner')
+      return Response.json({ language, denied: true }, { status: 403 });
+
+    const countAccounts = async prefix => {
+      const limit = 1000;
+      let count = 0, startAfter;
+      for (;;) {
+        const page = await this.storage.list({ prefix, limit, ...(startAfter ? { startAfter } : {}) });
+        count += page.size;
+        if (page.size < limit) return count;
+        startAfter = [...page.keys()].at(-1);
+      }
+    };
+    const [connected, launched] = await Promise.all([
+      countAccounts('ownerVersion:'),
+      countAccounts('feedback:launches:'),
+    ]);
+    return Response.json({ language, connected, launched });
   }
 
   async commandResult(installation, generation, command, status) {
+    const receivedAt = Date.now();
     if (typeof generation !== 'string' || !/^[a-f0-9]{32}$/.test(generation) ||
         !Number.isSafeInteger(command) || command <= 0 || typeof status !== 'string' || !Object.hasOwn(resultMessages, status))
       return Response.json({ error: 'Неверный отчёт выполнения' }, { status: 400 });
@@ -58,11 +104,17 @@ export class Pairing {
       }
       const item = (binding.recent || []).find(item => item.id === command);
       if (!item) return { error: 'Команда не найдена', code: 404 };
+      if (item.labQueuedAt && !item.labPollAt) return { error: 'Тестовая команда ещё не выдана', code: 409 };
       if (!allowedResult(item.action, status)) return { error: 'Результат не соответствует команде', code: 400 };
       // A delayed report is allowed after queue expiry, but not indefinitely.
       if (!Number.isSafeInteger(item.expires) || item.expires + 120000 <= Date.now())
         return { error: 'Отчёт устарел', code: 409 };
       await tx.put(key, { status, delivery: 'unknown' });
+      if (item.labQueuedAt) {
+        item.labReportedAt = receivedAt;
+        await tx.put('client:' + installation, binding);
+      }
+      if (status === 'queued' && !item.labQueuedAt) await this.recordFeedbackLaunch(tx, binding.owner);
       return { owner: binding.owner };
     });
     if (reservation.error) return Response.json({ error: reservation.error }, { status: reservation.code });
@@ -71,13 +123,22 @@ export class Pairing {
     let result = { status, delivery: 'unknown' };
     let editingCard = false;
     try {
+      const language = await this.language(reservation.owner);
+      let text = localize(language, ...resultMessages[status]);
       const card = await this.storage.get('card:' + installation + ':' + generation);
       const binding = await this.storage.get('client:' + installation);
       const item = binding?.recent?.find(item=>item.id === command);
+      if (item?.labQueuedAt) {
+        const total = Math.max(0, item.labReportedAt - item.labQueuedAt);
+        const poll = item.labPollAt ? Math.max(0, item.labPollAt - item.labQueuedAt) : null;
+        text += localize(language,
+          `\nTelelock test · request to game report: ${total} ms${poll === null ? '' : ` · first poll: ${poll} ms`}`,
+          `\nТест Telelock · от запроса до отчёта игры: ${total} мс${poll === null ? '' : ` · первый опрос: ${poll} мс`}`);
+      }
       const cardCommand = item?.action === '/cancel' ? item.targetCard || command : command;
       if (card && card.command === cardCommand) {
         editingCard = true;
-        if (card.finished || await this.editSearchCard(installation,generation,resultMessages[status],status !== 'queued',cardCommand)) {
+        if (card.finished || await this.editSearchCard(installation,generation,text,status !== 'queued',cardCommand)) {
           result = {status,delivery:'delivered'};
           await this.storage.put(key,result);
           return Response.json({accepted:true,...result});
@@ -86,7 +147,7 @@ export class Pairing {
 
       const response = await fetch('https://api.telegram.org/bot' + this.botToken + '/sendMessage', {
         method: 'POST', redirect: 'manual', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: reservation.owner, text: resultMessages[status] }),
+        body: JSON.stringify({ chat_id: reservation.owner, text }),
       });
       const data = await response.json();
       if (response.ok && data.ok === true) result = { status, delivery: 'delivered' };
@@ -111,9 +172,13 @@ export class Pairing {
     const binding = await this.storage.get('client:' + installation);
     if (!binding || binding.generation !== generation)
       return Response.json({ error: 'Привязка изменилась' }, { status: 409 });
+    const language = await this.language(binding.owner);
+    const t = (en, ru) => localize(language, en, ru);
     const key = 'test:' + installation;
     const started = Date.now();
-    let method = 'sendMessage', message = { chat_id: binding.owner, text: '✅ Проверочное уведомление KATKA получено. Если численный замер не появился, связь с Telegram всё равно работает.' };
+    let method = 'sendMessage', message = { chat_id: binding.owner,
+      text: t('✅ Telelock test notification received. The Telegram connection works even if no timing appears.',
+        '✅ Проверочное уведомление Telelock получено. Если численный замер не появился, связь с Telegram всё равно работает.') };
     let saved;
     if (receipt !== undefined) {
       if (typeof receipt !== 'string' || !/^[a-f0-9-]{36}$/.test(receipt) ||
@@ -126,8 +191,9 @@ export class Pairing {
         return Response.json({ error: 'Замер уже сохранён' }, { status: 409 });
       method = 'editMessageText';
       message.message_id = saved.message;
-      message.text = '✅ Проверка из игры: ' + elapsed + ' мс (' +
-        (elapsed / 1000).toFixed(3).replace('.', ',') + ' сек) до ответа сервера. Это не время доставки push на телефон.';
+      const seconds = (elapsed / 1000).toFixed(3);
+      message.text = t(`✅ In-game test: ${elapsed} ms (${seconds} s) until the server responded.`,
+        `✅ Проверка из игры: ${elapsed} мс (${seconds.replace('.', ',')} сек) до ответа сервера. Это не время доставки push на телефон.`);
     }
     try {
       const response = await fetch('https://api.telegram.org/bot' + this.botToken + '/' + method, {
@@ -146,7 +212,8 @@ export class Pairing {
         await this.storage.put(key, { receipt, message: data.result.message_id, generation, expires: Date.now() + 300000 });
         const serverElapsed = Math.max(0, Date.now()-started);
         try { await this.telegram('editMessageText', {chat_id:binding.owner,message_id:data.result.message_id,
-          text:'✅ Уведомление отправлено. Telegram подтвердил запрос сервера за ' + serverElapsed + ' мс. Это не время доставки push на телефон.'}); } catch {}
+          text:t(`✅ Notification sent. Telegram acknowledged the server request in ${serverElapsed} ms.`,
+            `✅ Уведомление отправлено. Telegram подтвердил запрос сервера за ${serverElapsed} мс. Это не время доставки push на телефон.`)}); } catch {}
         return Response.json({ delivery: 'delivered', test: receipt, serverElapsed });
       }
       await this.storage.put(key, { ...saved, elapsed });
@@ -163,7 +230,8 @@ export class Pairing {
     if (action === 'match') {
       const binding = await this.storage.get('client:' + installation);
       if (!binding || binding.generation !== generation) return Response.json({delivery:'previous_binding'}, {status:409});
-      try { await this.editSearchCard(installation,generation,'🎮 Матч найден! Возвращайся в Deadlock.',true); } catch {}
+      try { await this.editSearchCard(installation,generation,localize(await this.language(binding.owner),
+        '🎮 Match found! Return to Deadlock.', '🎮 Матч найден! Возвращайся в Deadlock.'),true); } catch {}
       const settings = await this.preferences(binding.owner);
       if (settings.mode === 'off' || settings.mode === 'auto' && origin === 'manual')
         return Response.json({delivery:'delivered',suppressed:true});
@@ -183,12 +251,15 @@ export class Pairing {
     if (!reservation.owner) return Response.json(reservation, { status: reservation.delivery === 'delivered' ? 200 : 409 });
     let result = { delivery: 'unknown' };
     try {
+      const language = await this.language(reservation.owner);
+      const t = (en, ru) => localize(language, en, ru);
       const response = await fetch('https://api.telegram.org/bot' + this.botToken + '/sendMessage', {
         method: 'POST', redirect: 'manual', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chat_id: reservation.owner, text: action === 'match'
-          ? '🎮 Матч найден! Возвращайся в Deadlock'
-          : action === 'connected' ? 'Telegram подключён. Управляйте своей игрой кнопками ниже.' : 'Проверочное уведомление KATKA из Deadlock.',
-          ...(action === 'connected' ? { reply_markup: keyboard(true, false, await this.tier(reservation.owner)) } : {}) }),
+          ? t('🎮 Match found! Return to Deadlock.', '🎮 Матч найден! Возвращайся в Deadlock')
+          : action === 'connected' ? t('Telegram is connected. Use the buttons below to control your game.', 'Telegram подключён. Управляйте своей игрой кнопками ниже.')
+          : t('Telelock test notification from Deadlock.', 'Проверочное уведомление Telelock из Deadlock.'),
+          ...(action === 'connected' ? { reply_markup: keyboard(true, 'home', await this.tier(reservation.owner), language) } : {}) }),
       });
       const data = await response.json();
       if (response.ok && data.ok === true) result = { delivery: 'delivered' };
@@ -219,7 +290,7 @@ export class Pairing {
 
   async fetch(request) {
     const input = await request.clone().json();
-    if (['command','result','match','telemetry','settings','test','testbot','unlink','register'].includes(input.action)) {
+    if (['command','result','match','telemetry','settings','language','test','testbot','unlink','register'].includes(input.action)) {
       const owner = input.owner || input.update?.message?.chat?.id ||
         (await this.storage.get('client:' + input.installation))?.owner;
       if (owner) return this.runForOwner(owner,()=>this.handleRequest(request));
@@ -229,7 +300,12 @@ export class Pairing {
 
   async handleRequest(request) {
     const { action, installation, expires, generation, owner, revision, update, ack, match,
-      command: commandId, status: resultStatus, test: receipt, elapsed, telemetry, origin } = await request.json();
+      command: commandId, status: resultStatus, test: receipt, elapsed, telemetry, origin, language,
+      statusExperiment, lab } = await request.json();
+    if (action === 'language') return this.changeLanguage({ installation, owner, generation, language });
+    if (action === 'feedback') return this.handleFeedback(owner, update);
+    if (action === 'pro') return this.claimProTrial(owner);
+    if (action === 'stats') return this.usageStats(owner);
     if (['settings','telemetry','testbot'].includes(action)) return this.experienceRequest({action,installation,owner,generation,update,telemetry});
     if (action === 'access') {
       if (!Number.isSafeInteger(owner) || owner <= 0) return Response.json({ error: 'Неверный аккаунт' }, { status: 400 });
@@ -257,6 +333,7 @@ export class Pairing {
         if (role === 'owner') await tx.put('accessOwner', owner);
         const tier = current?.tier === role ? 'free' : role;
         await tx.put(key, { tier });
+        if (staffAccess(tier)) await tx.put('language:' + owner, 'ru');
         await tx.put('accessMessage:' + owner, update.id);
         return Response.json({ changed: true, tier });
       });
@@ -264,7 +341,7 @@ export class Pairing {
     if (action === 'test') {
       const binding = await this.storage.get('client:' + installation);
       if (!binding || binding.generation !== generation) return Response.json({ error: 'Привязка изменилась' }, { status: 409 });
-      if (!fullAccess(await this.tier(binding?.owner))) return Response.json({ error: restrictedText }, { status: 403 });
+      if (!fullAccess(await this.tier(binding?.owner))) return Response.json({ error: restrictedText(await this.language(binding.owner)) }, { status: 403 });
       return this.testNotification(installation, generation, receipt, elapsed);
     }
     if (action === 'match' || action === 'connected') return this.notify(action, installation, generation, match, origin);
@@ -275,38 +352,48 @@ export class Pairing {
       if (chat?.type !== 'private' || !Number.isSafeInteger(chat.id) || chat.id <= 0 ||
           update.message.from?.id !== chat.id || !Number.isSafeInteger(id) || id < 0 ||
           typeof update.message.text !== 'string') return Response.json({ reply: null });
-      const command = update.message.text.toLowerCase();
+      const requested = update.message.text.toLowerCase();
+      const labPlay = requested === '/lab_play';
+      const command = labPlay ? '/play_normal' : requested;
       const reply = text => Response.json({ reply: { chat_id: chat.id, text } });
-      if (!commands.includes(command)) return reply(help);
-      if (!allowedCommand(await this.tier(chat.id), command)) return reply(restrictedText);
+      const language = await this.language(chat.id);
+      const t = (en, ru) => localize(language, en, ru);
+      if (!commands.includes(command)) return reply(helpText(language));
+      const tier = await this.tier(chat.id);
+      if (labPlay ? tier !== 'owner' : !allowedCommand(tier, command)) return reply(restrictedText(language));
       const sent = update.message.date;
       if (!Number.isSafeInteger(sent) || sent > Math.floor(Date.now()/1000) || sent * 1000 + 30000 <= Date.now())
-        return reply('Команда устарела. Отправьте её ещё раз.');
+        return reply(t('The command expired. Send it again.', 'Команда устарела. Отправьте её ещё раз.'));
       const queued = await this.storage.transaction(async tx => {
         const client = await tx.get('owner:' + chat.id);
         const binding = client && await tx.get('client:' + client);
         if (binding?.owner !== chat.id || binding.generation !== generation)
-          return reply('Сначала подключите Telegram в игре командой /code.');
+          return reply(t('Connect your game with /code first.', 'Сначала подключите Telegram в игре командой /code.'));
         if (update.expectedCommand !== undefined) {
           const card = await tx.get('card:' + client + ':' + generation);
           if (command !== '/cancel' || card?.command !== update.expectedCommand || card.finished)
-            return reply('Эта кнопка относится к завершённому поиску.');
+            return reply(t('This button belongs to a search that has ended.', 'Эта кнопка относится к завершённому поиску.'));
         }
         const now = Date.now();
         const recent = (binding.recent || []).filter(item => item.expires + 120000 > now);
         if (recent.some(item => item.update === id)) return Response.json({ reply: null });
-        if (sent < binding.since) return reply('Привязка изменилась. Отправьте команду ещё раз.');
+        if (sent < binding.since) return reply(t('The connection changed. Send the command again.', 'Привязка изменилась. Отправьте команду ещё раз.'));
         const targetCard = command === '/cancel' ? (await tx.get('card:' + client + ':' + generation))?.command : undefined;
-        const item = { ...(targetCard ? {targetCard} : {}), update: id, id: id + 1, action: command, expires: sent * 1000 + 30000, preparing: !!this.botToken && !!modeNames[command] };
+        const item = { ...(targetCard ? {targetCard} : {}), ...(labPlay ? {labQueuedAt: now} : {}),
+          update: id, id: id + 1, action: command, expires: sent * 1000 + 30000,
+          preparing: !labPlay && !!this.botToken && !!modeNames(language)[command] };
         recent.push(item);
         await tx.put('client:' + client, { ...binding, recent });
         return {client,binding,item};
       });
       if (queued instanceof Response) return queued;
+      if (labPlay) return reply(t('Telelock test requested a real normal match. Waiting up to 30 seconds for the test build to receive it.',
+        'Telelock запросил реальный обычный поиск. Тестовая сборка может принять команду в течение 30 секунд.'));
       const {client,binding,item} = queued;
       let card = await this.createSearchCard(client,binding,item);
       if (command === '/cancel' && item.targetCard) {
-        try { card = await this.editSearchCard(client,generation,'Отмена запрошена. Ожидаем подтверждения игры.',false,item.targetCard); } catch {}
+        try { card = await this.editSearchCard(client,generation,t('Cancellation requested. Waiting for the game to confirm.',
+          'Отмена запрошена. Ожидаем подтверждения игры.'),false,item.targetCard); } catch {}
       }
       await this.storage.transaction(async tx => {
         const current = await tx.get('client:' + client);
@@ -315,7 +402,8 @@ export class Pairing {
         if (saved) saved.preparing = false;
         await tx.put('client:' + client,current);
       });
-      return card ? Response.json({reply:null}) : reply('Команда принята сервером. Ожидаем выполнения в вашей игре.');
+      return card ? Response.json({reply:null}) : reply(t('Command accepted. Waiting for the game to respond.',
+        'Команда принята сервером. Ожидаем выполнения в вашей игре.'));
     }
     if (action === 'poll') {
       return this.storage.transaction(async tx => {
@@ -325,22 +413,37 @@ export class Pairing {
         if (generation && binding.generation !== generation) return Response.json({ error: 'Привязка изменилась' }, { status: 409 });
         await tx.put('seen:' + installation + ':' + binding.generation,Date.now());
         const recent = binding.recent || [];
-        const head = recent.find(item => !item.preparing && !item.done && item.expires > Date.now());
+        const tier = await this.tier(binding.owner, tx);
+        const available = item => !item.preparing && !item.done && item.expires > Date.now() &&
+          (!item.labQueuedAt || lab === true && tier === 'owner');
+        const head = recent.find(available);
+        let changed = false;
         if (head && generation === binding.generation && ack === head.id) {
           head.done = true;
-          await tx.put(key, { ...binding, recent });
+          changed = true;
         }
-        const tier = await this.tier(binding.owner, tx);
-        const next = recent.find(item => !item.preparing && !item.done && item.expires > Date.now() && allowedCommand(tier, item.action));
+        const next = recent.find(item => available(item) && allowedCommand(tier, item.action));
+        if (next?.labQueuedAt && !next.labPollAt) {
+          next.labPollAt = Date.now();
+          changed = true;
+        }
+        if (changed) await tx.put(key, { ...binding, recent });
         return Response.json({ settings: await this.preferences(binding.owner), generation: binding.generation, command: next ? { id: next.id, action: next.action, expires: next.expires } : null });
       });
     }
     if (action === 'status') {
       const client = owner ? await this.storage.get('owner:' + owner) : installation;
       const binding = client && await this.storage.get('client:' + client);
-      if (owner && binding?.owner !== owner) return Response.json({ generation: null, tier: 'free' });
-      return Response.json({ generation: binding?.generation ?? null, tier: await this.tier(binding?.owner),
-        ...(binding ? {live:await this.liveStatus(client,binding),settings:await this.preferences(binding.owner)} : {}) });
+      const language = await this.language(owner || binding?.owner);
+      if (owner && binding?.owner !== owner) return Response.json({ generation: null, tier: await this.tier(owner), language });
+      const tier = await this.tier(binding?.owner);
+      if (statusExperiment && tier !== 'owner')
+        return Response.json({ error: 'Telelock lab requires the owner account.' }, { status: 403 });
+      if (statusExperiment === 'lean')
+        return Response.json({ generation: binding.generation, tier, language, settings: await this.preferences(binding.owner, tier) });
+      // Existing game clients recognize test as the non-owner tier with full game controls.
+      return Response.json({ generation: binding?.generation ?? null, tier: !owner && tier === 'pro' ? 'test' : tier,
+        ...(binding ? {language,live:await this.liveStatus(client,binding,language),settings:await this.preferences(binding.owner)} : {}) });
     }
     if (action === 'unlink') {
       return this.storage.transaction(async tx => {
@@ -420,14 +523,17 @@ export class Pairing {
   }
 }
 
-Object.assign(Pairing.prototype, experience);
+Object.assign(Pairing.prototype, experience, feedback);
 
 export default {
   async fetch(request, env) {
-    const panelOrigin = env.KATKA_PANEL_ORIGIN;
-    const path = new URL(request.url).pathname;
-    const game = ['/pairing/claim','/v1/bind','/v1/status','/v1/poll','/v1/match','/v1/test','/v1/unlink','/v1/result','/v1/telemetry','/v1/settings'].includes(path);
-    const actions = { '/service/settings':'settings', '/service/testbot':'testbot', '/service/access': 'access', '/service/status': 'status', '/service/command': 'command', '/service/offer': 'offer', '/service/inspect': 'inspect', '/service/confirm': 'confirm', '/service/wait': 'wait' };
+    const started = performance.now();
+    const url = new URL(request.url);
+    const path = url.pathname;
+    const experiment = path === '/v1/status' ? url.searchParams.get('lab') : null;
+    const statusExperiment = statusExperiments.includes(experiment) ? experiment : undefined;
+    const game = ['/pairing/claim','/v1/bind','/v1/status','/v1/poll','/v1/match','/v1/test','/v1/unlink','/v1/result','/v1/telemetry','/v1/settings','/v1/language'].includes(path);
+    const actions = { '/service/stats':'stats', '/service/pro':'pro', '/service/feedback':'feedback', '/service/language':'language', '/service/settings':'settings', '/service/testbot':'testbot', '/service/access': 'access', '/service/status': 'status', '/service/command': 'command', '/service/offer': 'offer', '/service/inspect': 'inspect', '/service/confirm': 'confirm', '/service/wait': 'wait' };
     if (!game && !Object.hasOwn(actions, path)) return new Response(null, { status: 404 });
     const headers = {};
     if (game && request.headers.get('Origin') === panelOrigin) {
@@ -435,6 +541,9 @@ export default {
       headers['Access-Control-Allow-Methods'] = 'POST';
       headers['Access-Control-Allow-Headers'] = 'Authorization, Content-Type';
       headers.Vary = 'Origin';
+      if (statusExperiment) headers['Timing-Allow-Origin'] = panelOrigin;
+      if (statusExperiment !== 'baseline' && request.method === 'OPTIONS')
+        headers['Access-Control-Max-Age'] = '600';
     }
     headers['Cache-Control'] = 'no-store';
     if (request.method === 'OPTIONS' && headers.Vary) return new Response(null, { status: 204, headers });
@@ -444,18 +553,22 @@ export default {
     let body;
     try { body = await request.json(); } catch { return new Response(null, { status: 400, headers }); }
     const directory = () => env.PAIRINGS.get(env.PAIRINGS.idFromName('bindings'));
-    if (['/v1/status','/v1/poll','/v1/match','/v1/test','/v1/unlink','/v1/result','/service/command','/service/status','/service/access','/service/settings','/service/testbot','/v1/telemetry','/v1/settings'].includes(path)) {
+    if (['/service/language','/service/feedback','/service/pro','/service/stats'].includes(path) && (!Number.isSafeInteger(body?.owner) || body.owner <= 0))
+      return new Response(null, { status: 400, headers });
+    if (['/v1/status','/v1/poll','/v1/match','/v1/test','/v1/unlink','/v1/result','/service/command','/service/status','/service/access','/service/settings','/service/testbot','/service/language','/service/feedback','/service/pro','/service/stats','/v1/telemetry','/v1/settings','/v1/language'].includes(path)) {
       if (path === '/service/status' && body?.owner !== undefined &&
           (!Number.isSafeInteger(body.owner) || body.owner <= 0)) return new Response(null, { status: 400, headers });
       const action = path.split('/').pop();
       const reply = await directory().fetch('https://pairing.internal/', {
         method: 'POST', body: JSON.stringify({ action, installation: path === '/service/status' ? body?.installation : await fingerprint(token),
-          owner: ['/service/status','/service/access','/service/settings','/service/testbot'].includes(path) ? body?.owner : undefined,
-          generation: body?.generation, ack: body?.ack, match: body?.match,
+          owner: ['/service/status','/service/access','/service/settings','/service/testbot','/service/language','/service/feedback','/service/pro','/service/stats'].includes(path) ? body?.owner : undefined,
+          generation: body?.generation, ack: body?.ack, match: body?.match, language: body?.language,
           command: body?.command, status: body?.status, test: body?.test, elapsed: body?.elapsed,
           telemetry: game ? body?.telemetry : undefined, origin: body?.origin,
+          statusExperiment, lab: path === '/v1/poll' && body?.lab === true,
           update: game ? undefined : body }),
       });
+      if (statusExperiment && reply.ok) headers['Server-Timing'] = 'gateway;dur=' + (performance.now() - started).toFixed(2);
       return new Response(reply.body, { status: reply.status, headers: { ...headers, 'Content-Type': 'application/json' } });
     }
     if (typeof body?.code !== 'string' || !/^[A-F0-9]{16}$/.test(body.code)) return new Response(null, { status: 400, headers });

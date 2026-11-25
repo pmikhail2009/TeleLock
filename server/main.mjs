@@ -18,7 +18,7 @@ try {
     server.once('error', reject);
     server.listen(port, host, resolve);
   });
-  console.log('KATKA принимает подключения на порту', server.address().port);
+  console.log('Telelock принимает подключения на порту', server.address().port);
   for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => abort.abort());
   workers.push(matches.retryUntilStopped(abort.signal));
   if (!process.env.KATKA_CLOUD_SECRET) workers.push(startTelegram(registry, token, abort.signal));

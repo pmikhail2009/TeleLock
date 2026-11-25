@@ -3,7 +3,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { COMMANDS } from './registry.mjs';
 
 const HELP = [
-  'Оповещения в меню KATKA: ВКЛ — для любого найденного матча; ВЫКЛ — отключены; Авто — только при запуске поиска через бота. Режим сохраняется.',
+  'Оповещения в меню Telelock: ВКЛ — для любого найденного матча; ВЫКЛ — отключены; Авто — только при запуске поиска через бота. Режим сохраняется.',
   '/code — получить одноразовый код подключения',
   '/play_normal — искать матч в обычном режиме',
   '/play_ranked — искать ранговый матч',
@@ -110,14 +110,14 @@ export async function startTelegram(registry, token, signal) {
           try {
             await api(token, 'sendMessage', reply, signal);
           } catch {
-            if (!signal?.aborted) console.error('KATKA: Telegram не подтвердил ответ на команду.');
+            if (!signal?.aborted) console.error('Telelock: Telegram не подтвердил ответ на команду.');
           }
         }
       }
     } catch (error) {
       if (signal?.aborted) return;
       if (error.status === 401 || error.status === 404) throw error;
-      console.error('KATKA: получение Telegram-команд прервано, повторяю подключение.');
+      console.error('Telelock: получение Telegram-команд прервано, повторяю подключение.');
       const backoff = Math.max(2, error.retryAfter || 0) * 1000;
       try { await delay(backoff, undefined, { signal }); }
       catch (abort) { if (!signal?.aborted) throw abort; }

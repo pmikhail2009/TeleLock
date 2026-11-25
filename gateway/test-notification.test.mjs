@@ -23,12 +23,12 @@ test('test receipt edits only the original message with milliseconds and seconds
   try {
     const result=await (await f.call()).json();
     assert.equal(result.delivery,'delivered');
-    assert.match(sent[0].body.text,/Проверочное уведомление KATKA получено/);
-    assert.match(sent[1].body.text,/Telegram подтвердил запрос сервера/);
+    assert.match(sent[0].body.text,/Telelock test notification received/);
+    assert.match(sent[1].body.text,/Telegram acknowledged the server request/);
     assert.equal((await f.call({test:result.test,elapsed:1234})).status,200);
     assert.match(sent[2].url,/\/editMessageText$/);
     assert.deepEqual(sent[2].body,{chat_id:101,message_id:42,
-      text:'✅ Проверка из игры: 1234 мс (1,234 сек) до ответа сервера. Это не время доставки push на телефон.'});
+      text:'✅ In-game test: 1234 ms (1.234 s) until the server responded.'});
     assert.equal((await f.call({test:result.test,elapsed:5678})).status,409);
     assert.equal((await f.call({installation:'other',test:result.test,elapsed:1234})).status,409);
     assert.equal((await f.call({generation:'b'.repeat(32),test:result.test,elapsed:1234})).status,409);

@@ -44,7 +44,7 @@ test('execution results notify only the installation owner and expose no owner i
     assert.deepEqual(await first.json(), { accepted: true, status: 'queued', delivery: 'delivered' });
     await f.report({ installation: 'two', generation: otherGeneration, command: 22 });
     assert.deepEqual(sent.map(message => message.chat_id), [101, 202]);
-    assert.match(sent[0].text, /Поиск матча начат/);
+    assert.match(sent[0].text, /Matchmaking started/);
   });
 });
 
@@ -171,7 +171,7 @@ test('all play results are accepted without pretending an unconfirmed result is 
     const f = fixture();
     await intercept(async sent => {
       assert.equal((await f.report({ status })).status, 200);
-      if (status === 'unconfirmed') assert.match(sent[0].text, /не подтвердила/);
+      if (status === 'unconfirmed') assert.match(sent[0].text, /did not confirm/);
     });
   }
 });
@@ -213,6 +213,6 @@ test('initial server reply clearly distinguishes acceptance from execution', asy
       from: { id: 101 }, date: Math.floor(Date.now() / 1000), text: '/play_normal' } },
   }) }));
   const body = await result.json();
-  assert.match(body.reply.text, /принята сервером/);
-  assert.match(body.reply.text, /Ожидаем выполнения/);
+  assert.match(body.reply.text, /Command accepted/);
+  assert.match(body.reply.text, /Waiting for the game/);
 });

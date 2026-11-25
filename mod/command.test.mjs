@@ -161,11 +161,13 @@ test('network failure preserves approval; actual owner removal revokes it', () =
   unlinked.execute(1, '/play_normal'); assert.deepEqual(unlinked.events, []);
 });
 
-test('busy page is never navigated before completion or the ten-second watchdog', () => {
+test('busy page is not reloaded before the browser network timeout can finish', () => {
   const c = client(); c.title('ready:commands'); c.tick(); c.title('busy:commands:1');
-  const count = c.pollUrls.length; c.advance(9000); c.tick();
+  const count = c.pollUrls.length; c.advance(19000); c.tick();
   assert.equal(c.pollUrls.length, count);
   c.advance(2000); c.tick();
+  assert.equal(c.pollUrls.length, count);
+  c.advance(5000); c.tick();
   assert.match(c.pollUrls.at(-1), /recovery=1$/);
   const recoveredCount = c.pollUrls.length; c.advance(1000); c.tick();
   assert.equal(c.pollUrls.length, recoveredCount);

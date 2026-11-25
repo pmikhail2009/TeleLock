@@ -6,7 +6,7 @@ import { Pairing } from '../gateway/worker.mjs';
 
 const html = await readFile(new URL('./panel/index.html', import.meta.url), 'utf8');
 const helpers = html.slice(html.indexOf('// These records belong'), html.indexOf('function render()'));
-const loops = html.slice(html.indexOf('function commandLoop()'), html.indexOf('async function reportMatch()'));
+const loops = html.slice(html.indexOf('function commandLoop('), html.indexOf('async function reportMatch()'));
 const generation = 'a'.repeat(32);
 
 function installation() {
