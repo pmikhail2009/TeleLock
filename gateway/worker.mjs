@@ -7,7 +7,6 @@ import { fullAccess, staffAccess, allowedCommand } from './access.mjs';
 
 const panelOrigin = 'https://pmikhail2009.github.io';
 const encoder = new TextEncoder();
-const proTrialDuration = 7 * 24 * 60 * 60 * 1000;
 const commands = ['/play_normal', '/play_ranked', '/play_street', '/cancel', '/watch_black'];
 const statusExperiments = ['baseline', 'cached', 'lean'];
 const resultMessages = {
@@ -43,23 +42,17 @@ export class Pairing {
     if (!owner) return 'free';
     const role = (await storage.get('access:' + owner))?.tier;
     if (staffAccess(role)) return role;
-    return (await storage.get('proTrial:' + owner)) > Date.now() ? 'pro' : 'free';
+    return 'free';
   }
 
-  async claimProTrial(owner) {
+  async registerThanks(owner) {
     if (!Number.isSafeInteger(owner) || owner <= 0)
       return Response.json({ error: 'Invalid account.' }, { status: 400 });
-    const language = await this.language(owner);
-    const state = await this.storage.transaction(async tx => {
-      if (staffAccess((await tx.get('access:' + owner))?.tier)) return 'staff';
-      const key = 'proTrial:' + owner;
-      const expires = await tx.get(key);
-      const now = Date.now();
-      if (expires !== undefined) return expires > now ? 'active' : 'expired';
-      await tx.put(key, now + proTrialDuration);
-      return 'granted';
+    await this.storage.transaction(async tx => {
+      const key = 'thanks:' + owner;
+      if (!await tx.get(key)) await tx.put(key, { registered: Date.now() });
     });
-    return Response.json({ language, state });
+    return Response.json({ language: await this.language(owner), registered: true });
   }
 
   async usageStats(owner) {
@@ -304,7 +297,7 @@ export class Pairing {
       statusExperiment, lab } = await request.json();
     if (action === 'language') return this.changeLanguage({ installation, owner, generation, language });
     if (action === 'feedback') return this.handleFeedback(owner, update);
-    if (action === 'pro') return this.claimProTrial(owner);
+    if (action === 'thanks' || action === 'pro') return this.registerThanks(owner);
     if (action === 'stats') return this.usageStats(owner);
     if (['settings','telemetry','testbot'].includes(action)) return this.experienceRequest({action,installation,owner,generation,update,telemetry});
     if (action === 'access') {
@@ -533,7 +526,7 @@ export default {
     const experiment = path === '/v1/status' ? url.searchParams.get('lab') : null;
     const statusExperiment = statusExperiments.includes(experiment) ? experiment : undefined;
     const game = ['/pairing/claim','/v1/bind','/v1/status','/v1/poll','/v1/match','/v1/test','/v1/unlink','/v1/result','/v1/telemetry','/v1/settings','/v1/language'].includes(path);
-    const actions = { '/service/stats':'stats', '/service/pro':'pro', '/service/feedback':'feedback', '/service/language':'language', '/service/settings':'settings', '/service/testbot':'testbot', '/service/access': 'access', '/service/status': 'status', '/service/command': 'command', '/service/offer': 'offer', '/service/inspect': 'inspect', '/service/confirm': 'confirm', '/service/wait': 'wait' };
+    const actions = { '/service/stats':'stats', '/service/pro':'pro', '/service/thanks':'thanks', '/service/feedback':'feedback', '/service/language':'language', '/service/settings':'settings', '/service/testbot':'testbot', '/service/access': 'access', '/service/status': 'status', '/service/command': 'command', '/service/offer': 'offer', '/service/inspect': 'inspect', '/service/confirm': 'confirm', '/service/wait': 'wait' };
     if (!game && !Object.hasOwn(actions, path)) return new Response(null, { status: 404 });
     const headers = {};
     if (game && request.headers.get('Origin') === panelOrigin) {
@@ -553,15 +546,15 @@ export default {
     let body;
     try { body = await request.json(); } catch { return new Response(null, { status: 400, headers }); }
     const directory = () => env.PAIRINGS.get(env.PAIRINGS.idFromName('bindings'));
-    if (['/service/language','/service/feedback','/service/pro','/service/stats'].includes(path) && (!Number.isSafeInteger(body?.owner) || body.owner <= 0))
+    if (['/service/language','/service/feedback','/service/pro','/service/thanks','/service/stats'].includes(path) && (!Number.isSafeInteger(body?.owner) || body.owner <= 0))
       return new Response(null, { status: 400, headers });
-    if (['/v1/status','/v1/poll','/v1/match','/v1/test','/v1/unlink','/v1/result','/service/command','/service/status','/service/access','/service/settings','/service/testbot','/service/language','/service/feedback','/service/pro','/service/stats','/v1/telemetry','/v1/settings','/v1/language'].includes(path)) {
+    if (['/v1/status','/v1/poll','/v1/match','/v1/test','/v1/unlink','/v1/result','/service/command','/service/status','/service/access','/service/settings','/service/testbot','/service/language','/service/feedback','/service/pro','/service/thanks','/service/stats','/v1/telemetry','/v1/settings','/v1/language'].includes(path)) {
       if (path === '/service/status' && body?.owner !== undefined &&
           (!Number.isSafeInteger(body.owner) || body.owner <= 0)) return new Response(null, { status: 400, headers });
       const action = path.split('/').pop();
       const reply = await directory().fetch('https://pairing.internal/', {
         method: 'POST', body: JSON.stringify({ action, installation: path === '/service/status' ? body?.installation : await fingerprint(token),
-          owner: ['/service/status','/service/access','/service/settings','/service/testbot','/service/language','/service/feedback','/service/pro','/service/stats'].includes(path) ? body?.owner : undefined,
+          owner: ['/service/status','/service/access','/service/settings','/service/testbot','/service/language','/service/feedback','/service/pro','/service/thanks','/service/stats'].includes(path) ? body?.owner : undefined,
           generation: body?.generation, ack: body?.ack, match: body?.match, language: body?.language,
           command: body?.command, status: body?.status, test: body?.test, elapsed: body?.elapsed,
           telemetry: game ? body?.telemetry : undefined, origin: body?.origin,

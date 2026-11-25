@@ -22,6 +22,7 @@ async function fixture({ linked = true, stale = false, offline = false, tier = '
           return directory.fetch(new Request(url, { method: 'POST', body: JSON.stringify({ action, owner: body.owner, update: body }) }));
         }
         if (url.endsWith('/status')) return Response.json({ generation: linked && !stale ? generation : null, tier, language });
+        if (url.endsWith('/thanks')) return Response.json({ language, registered:true });
         if (url.endsWith('/offer')) return Response.json({ ok: true });
         if (url.endsWith('/feedback')) {
           if (body.operation === 'list') return tier === 'free'
@@ -56,7 +57,7 @@ async function fixture({ linked = true, stale = false, offline = false, tier = '
 test('main menu groups settings and game actions without queueing a search', async () => {
   const f = await fixture();
   await f.invoke('/start');
-  assert.deepEqual(Array.from(f.sent[0].reply_markup.keyboard.flat()), [labels.play, labels.control, labels.pro, 'test']);
+  assert.deepEqual(Array.from(f.sent[0].reply_markup.keyboard.flat()), [labels.play, labels.control, labels.thanks, 'test']);
   await f.invoke(labels.play);
   assert.deepEqual(Array.from(f.sent.at(-1).reply_markup.keyboard, row => Array.from(row)),
     [[labels.normal, labels.ranked, labels.street], [labels.cancel, labels.watch], [labels.back]]);
@@ -80,13 +81,13 @@ test('signing into each staff role shows the shared menu in Russian with only it
   });
   const f = await fixture({ linked: false, directory });
   await f.invoke('/menu');
-  assert.deepEqual(Array.from(f.sent.at(-1).reply_markup.keyboard.flat()), [labels.play, labels.control, labels.pro]);
+  assert.deepEqual(Array.from(f.sent.at(-1).reply_markup.keyboard.flat()), [labels.play, labels.control, labels.thanks]);
   let messageId = 1;
   for (const [password, role, other] of [['personal', 'admin', 'test'], ['shared', 'test', 'admin']]) {
     await f.invoke(password, { message_id: messageId++ });
     assert.match(f.sent.at(-1).text, new RegExp('Режим ' + role + ' включён'));
     assert.deepEqual(Array.from(f.sent.at(-1).reply_markup.keyboard.flat()),
-      ['🎮 Играть', '⚙️ Центр управления', '⭐ Перейти на Pro', role]);
+      ['🎮 Играть', '⚙️ Центр управления', 'Сказать автору спасибо', role]);
     await f.invoke(role);
     const staffButtons = ['⭐ Оценки и отзывы', '↩️ Назад'];
     if (role === 'admin') staffButtons.unshift('📊 Статистика Telelock');
@@ -101,7 +102,7 @@ test('signing into each staff role shows the shared menu in Russian with only it
     assert.match(f.sent.at(-1).text, /соответствующей служебной ролью/);
     await f.invoke(password, { message_id: messageId++ });
     assert.deepEqual(Array.from(f.sent.at(-1).reply_markup.keyboard.flat()),
-      ['🎮 Играть', '⚙️ Центр управления', '⭐ Перейти на Pro']);
+      ['🎮 Играть', '⚙️ Центр управления', 'Сказать автору спасибо']);
   }
 });
 
@@ -187,35 +188,39 @@ test('temporary outage produces a useful reply and never queues a command', asyn
   assert.ok(!f.calls.some(c => c.url.endsWith('/command')));
 });
 
-test('free keyboard and manual commands expose only starting modes and auto notifications', async () => {
-  const f = await fixture({tier:'free'});
-  await f.invoke(labels.play);
-  assert.deepEqual(Array.from(f.sent[0].reply_markup.keyboard, row => Array.from(row)),
-    [[labels.normal, labels.ranked], [labels.street], [labels.back]]);
-  for(const action of ['/cancel','/watch_black','/status']) {
+test('ordinary users see every game control and can use manual commands', async () => {
+  const f=await fixture({tier:'free'});
+  await f.invoke('/play');
+  assert.deepEqual(Array.from(f.sent.at(-1).reply_markup.keyboard,row=>Array.from(row)),
+    [[labels.normal,labels.ranked,labels.street],[labels.cancel,labels.watch],[labels.back]]);
+  for(const action of ['/cancel','/watch_black']) {
     await f.invoke(action);
-    assert.match(f.sent.at(-1).text,/free version/);
+    assert.equal(f.calls.at(-1).body.message.text,action);
   }
-  assert.ok(!f.calls.some(call=>call.url.endsWith('/command')));
-  await f.invoke(labels.normal);
-  assert.equal(f.calls.at(-1).body.message.text,'/play_normal');
+  await f.invoke('/status');
+  assert.match(f.sent.at(-1).text,/Telegram is connected/);
+  await f.invoke('/settings');
+  assert.ok(f.sent.at(-1).reply_markup.inline_keyboard.flat().some(button=>button.callback_data.startsWith('test:')));
 });
 
-test('unpaired users can open the Pro offer without claiming the trial', async () => {
-  const f = await fixture({ linked: false, tier: 'free' });
-  await f.invoke('/menu');
-  assert.ok(f.sent.at(-1).reply_markup.keyboard.flat().includes(labels.pro));
-  await f.invoke(labels.pro);
-  const payment = f.sent.at(-1).reply_markup.inline_keyboard[0][0];
-  assert.equal(payment.text, 'Continue to payment');
-  assert.equal(payment.callback_data, 'pro:pay');
-  assert.ok(f.calls.every(call => call.url.endsWith('/status')));
+test('thanks works before pairing in both languages and replaces old Pro entry points',async()=>{
+  for(const [language,label,text,coin] of [['ru','Сказать автору спасибо','Ваше спасибо зарегистрировано👍','Отправить монетку автору❤️'],
+    ['en',labels.thanks,'Your thanks have been registered👍','Send the author a coin❤️']]) {
+    const f=await fixture({linked:false,tier:'free',language});
+    for(const command of [label,'/thanks','/pro','⭐ Upgrade to Pro']) {
+      await f.invoke(command);
+      assert.equal(f.sent.at(-1).text,text);
+      const button=f.sent.at(-1).reply_markup.inline_keyboard[0][0];
+      assert.equal(button.text,coin);assert.equal(button.url,'https://t.me/zzzMister');
+      assert.equal(f.calls.at(-1).url,'https://mock.invalid/service/thanks');
+    }
+  }
 });
 
-test('Pro enables game and notification controls without exposing staff reviews', async () => {
-  const f = await fixture({ tier: 'pro' });
+test('all users get game and notification controls without staff reviews', async () => {
+  const f = await fixture({ tier: 'free' });
   await f.invoke('/menu');
-  assert.deepEqual(Array.from(f.sent.at(-1).reply_markup.keyboard.flat()), [labels.play, labels.control, labels.pro]);
+  assert.deepEqual(Array.from(f.sent.at(-1).reply_markup.keyboard.flat()), [labels.play, labels.control, labels.thanks]);
   await f.invoke(labels.play);
   assert.deepEqual(Array.from(f.sent.at(-1).reply_markup.keyboard.at(-1)), [labels.back]);
   assert.ok(f.sent.at(-1).reply_markup.keyboard.flat().includes(labels.cancel));

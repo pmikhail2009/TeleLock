@@ -1,9 +1,9 @@
 import { api, fetch } from 'sdk';
 import { gateway, secret } from '../lib/config.js';
 import { issueCode, pairingForOwner, redeemCode } from '../lib/pairing.js';
-import { commandFor, keyboard, helpText, freeHelpText, restrictedText, statusText, settingsMessage,
+import { commandFor, keyboard, helpText, restrictedText, statusText, settingsMessage,
   currentLanguage, localize, languageMessage, feedbackMaxLength, feedbackPrompt, feedbackThanks,
-  feedbackMessage, reviewsMessage, fullAccess, proMessage, staffMenu, statsText } from '../lib/controls.js';
+  feedbackMessage, reviewsMessage, thanksMessage, staffMenu, statsText } from '../lib/controls.js';
 
 async function relay(action, payload) {
   const response = await fetch(gateway + '/service/' + action, {
@@ -67,9 +67,7 @@ export default async function (message, ctx) {
     language = currentLanguage(status?.language);
     if (result?.changed) await api.sendMessage({ chat_id: message.chat.id,
       text: result.tier === 'free'
-        ? status?.tier === 'pro'
-          ? t('Your Telelock Pro trial is still active.', 'Ваш пробный период Telelock Pro ещё активен.')
-          : t('Full access is off. The free version uses Auto notifications.', 'Скрытый доступ выключен. Бесплатная версия: оповещения Авто.')
+        ? t('Staff mode is off. All game features remain available for free.', 'Служебный режим выключен. Все игровые функции по-прежнему доступны бесплатно.')
         : t(`Signed in as ${staffMenu(result.tier)}. Send the same password to sign out.`,
           `Режим ${staffMenu(result.tier)} включён. Отправьте тот же пароль, чтобы выйти.`),
       reply_markup: keyboard(!!status?.generation, 'home', status?.tier ?? result.tier, language) });
@@ -102,6 +100,11 @@ export default async function (message, ctx) {
   }
   let binding, current;
   try {
+    if (command === '/thanks' || command === '/pro') {
+      const result = await relay('thanks', { owner });
+      await api.sendMessage({ chat_id: owner, ...thanksMessage(result.language) });
+      return;
+    }
     if (command === '/stats') {
       const result = await relay('stats', { owner });
       await api.sendMessage({ chat_id: owner, text: statsText(result) });
@@ -128,10 +131,6 @@ export default async function (message, ctx) {
     'Откройте центр управления, получите новый код и введите его в меню Esc в Deadlock.');
   if (command === '/language') {
     await api.sendMessage({ chat_id: owner, ...languageMessage(language) });
-    return;
-  }
-  if (command === '/pro') {
-    await api.sendMessage({ chat_id: owner, ...proMessage(language) });
     return;
   }
   if (command === '/control') {
@@ -164,7 +163,7 @@ export default async function (message, ctx) {
     return;
   }
   if (command === '/help') {
-    await send(fullAccess(tier) ? helpText(language) : freeHelpText(language), linked, 'control');
+    await send(helpText(language), linked, 'control');
     return;
   }
   if (command === '/start' || command === '/menu') {
@@ -173,10 +172,6 @@ export default async function (message, ctx) {
   }
   if (!linked) {
     await send(connectText());
-    return;
-  }
-  if (!fullAccess(tier) && ['/status','/cancel','/watch_black','/settings','/test'].includes(command)) {
-    await send(restrictedText(language), true, ['/settings', '/test'].includes(command) ? 'control' : 'play');
     return;
   }
   if (command === '/status') {
@@ -192,7 +187,7 @@ export default async function (message, ctx) {
     return;
   }
   if (!['/play_normal', '/play_ranked', '/play_street', '/cancel', '/watch_black', '/lab_play'].includes(command)) {
-    await send(fullAccess(tier) ? helpText(language) : freeHelpText(language), true, 'control');
+    await send(helpText(language), true, 'control');
     return;
   }
   const response = await fetch(gateway + '/service/command', {

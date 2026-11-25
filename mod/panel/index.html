@@ -80,7 +80,7 @@ let lastPing = null;
 const labPanel = new URLSearchParams(location.search).get('lab') === '1';
 const labStrategies = ['baseline', 'cached', 'lean'];
 let accessTier = 'free';
-const fullAccess = () => accessTier === 'owner' || accessTier === 'test';
+const fullAccess = () => true;
 
 let language = 'en';
 let languagePickerOpen = false;
@@ -179,7 +179,6 @@ async function refreshProfile(timing) {
   const fresh = changed || profile.revision === before.revision;
   if (fresh && !profile.pending.language && ['en', 'ru'].includes(current.language)) profile.language = current.language;
   if (fresh && !profile.pending.notifications && ['on', 'off', 'auto'].includes(current.settings?.mode)) profile.mode = current.settings.mode;
-  if (profile.tier === 'free') { delete profile.pending.notifications; profile.mode = 'auto'; }
   if (!profile.generation) profile.pending = {};
   writeProfile(profile);
   known = true;
@@ -735,7 +734,7 @@ if (view === 'native') {
     if (!profileProtocol && state.indexOf('cached_') === 0) return;
     const profile = readProfile();
     const title = ['native', id, state, result, online && lastPing !== null ? lastPing : 'none',
-      profile.tier === 'free' ? 'auto' : profile.mode, accessTier, language];
+      profile.mode, accessTier, language];
     if (timing) title.push(['lab', timing.http ?? 'none', timing.gateway ?? 'none', timing.browser ?? 'none'].join(','));
     if (profileProtocol) title.push('pending,' + Number(!!profile.pending.language) + ',' + Number(!!profile.pending.notifications));
     const next = title.join(':');

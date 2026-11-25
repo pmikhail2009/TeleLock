@@ -5,7 +5,7 @@ export const languageChanged = language => localize(language, 'Language set to E
 const russianLabels = {
   play: '🎮 Играть',
   control: '⚙️ Центр управления',
-  pro: '⭐ Перейти на Pro',
+  thanks: 'Сказать автору спасибо',
   modes: '🎮 Выбрать режим',
   watch: '👀 Включить наблюдение',
   cancel: '⏹ Отменить поиск',
@@ -25,7 +25,7 @@ const russianLabels = {
 export const labels = {
   play: '🎮 Play',
   control: '⚙️ Control Center',
-  pro: '⭐ Upgrade to Pro',
+  thanks: 'Thank the author',
   modes: '🎮 Choose mode',
   watch: '👀 Enable monitoring',
   cancel: '⏹ Cancel search',
@@ -43,13 +43,13 @@ export const labels = {
 };
 
 export const staffAccess = tier => tier === 'owner' || tier === 'test';
-export const fullAccess = tier => staffAccess(tier) || tier === 'pro';
+export const fullAccess = () => true;
 export const staffMenu = tier => tier === 'owner' ? 'admin' : tier === 'test' ? 'test' : null;
 
 export function keyboard(linked, section = 'home', tier = 'free', language = 'en') {
   const buttons = localize(language, labels, russianLabels);
   const role = staffMenu(tier);
-  let rows = [[buttons.play, buttons.control], [buttons.pro]];
+  let rows = [[buttons.play, buttons.control], [buttons.thanks]];
   if (role) rows.push([role]);
   if (section === 'staff' && role) {
     rows = [[buttons.reviews], [buttons.back]];
@@ -59,14 +59,13 @@ export function keyboard(linked, section = 'home', tier = 'free', language = 'en
     rows = [];
     if (linked) {
       const modes = [buttons.normal, buttons.ranked];
-      if (fullAccess(tier)) rows.push([...modes, buttons.street], [buttons.cancel, buttons.watch]);
-      else rows.push(modes, [buttons.street]);
+      rows.push([...modes, buttons.street], [buttons.cancel, buttons.watch]);
     }
     rows.push([buttons.back]);
   }
   if (section === 'control') {
     rows = [[buttons.language, buttons.code]];
-    if (linked && fullAccess(tier)) rows.push([buttons.settings]);
+    if (linked) rows.push([buttons.settings]);
     rows.push([buttons.feedback], [buttons.help, buttons.back]);
   }
   return {
@@ -79,7 +78,7 @@ export function keyboard(linked, section = 'home', tier = 'free', language = 'en
 }
 
 const buttonCommands = {
-  play: '/play', control: '/control', pro: '/pro',
+  play: '/play', control: '/control', thanks: '/thanks',
   settings: '/settings', modes: '/modes', watch: '/watch_black', cancel: '/cancel',
   help: '/help', code: '/code', normal: '/play_normal',
   ranked: '/play_ranked', street: '/play_street', back: '/menu', language: '/language',
@@ -87,6 +86,9 @@ const buttonCommands = {
 };
 const buttons = Object.fromEntries(Object.entries(buttonCommands).flatMap(([key, command]) =>
   [[labels[key], command], [russianLabels[key], command]]));
+// Keep old keyboards usable after removing the subscription.
+buttons['⭐ Перейти на Pro'] = '/thanks';
+buttons['⭐ Upgrade to Pro'] = '/thanks';
 buttons['📡 Статус подключения'] = '/status';
 buttons['📡 Что сейчас?'] = '/status';
 buttons['📡 Game status'] = '/status';
@@ -133,8 +135,8 @@ export const helpText = language => localize(language, [
 ].join('\n'), russianHelp);
 
 export const restrictedText = language => localize(language,
-  'This feature requires Telelock Pro. The free version supports starting matchmaking and Auto notifications. Use /pro to see the offer.',
-  'Эта функция недоступна в бесплатной версии. Доступны запуск матчей и уведомления в режиме Авто.');
+  'This feature requires administrator access.',
+  'Эта функция доступна только администратору.');
 
 export function statsText({ language, denied, connected, launched }) {
   const t = (en, ru) => localize(language, en, ru);
@@ -147,31 +149,14 @@ export function statsText({ language, denied, connected, launched }) {
   ].join('\n');
 }
 
-export const freeHelpText = language => localize(language,
-  'Open Play to start matchmaking and get Telegram notifications for searches started through the bot. Open Control Center to connect your game, change the language or leave feedback. Use /pro to see the Pro offer.',
-  'Откройте «Играть», чтобы запустить поиск и получать уведомления о матчах. В центре управления можно подключить игру, сменить язык или оставить отзыв. Команда /pro открывает предложение Pro.');
-
-export function proMessage(language) {
+export function thanksMessage(language) {
   return {
-    text: localize(language,
-      'Telelock Pro unlocks game status, search cancellation, match monitoring and notification settings.',
-      'Telelock Pro открывает статус игры, отмену поиска, наблюдение и настройки уведомлений.'),
+    text: localize(language, 'Your thanks have been registered👍', 'Ваше спасибо зарегистрировано👍'),
     reply_markup: { inline_keyboard: [[{
-      text: localize(language, 'Continue to payment', 'Перейти к оплате'),
-      callback_data: 'pro:pay',
+      text: localize(language, 'Send the author a coin❤️', 'Отправить монетку автору❤️'),
+      url: 'https://t.me/zzzMister',
     }]] },
   };
-}
-
-export function proPaymentMessage({ language, state }) {
-  const t = (en, ru) => localize(language, en, ru);
-  const messages = {
-    granted: t('Enjoy 7 days of Telelock Pro for free!', 'Дарим 7 дней Telelock Pro бесплатно!'),
-    active: t('Your free 7-day Telelock Pro trial is already active.', 'Ваш бесплатный семидневный пробный период Telelock Pro уже активен.'),
-    expired: t('Your free Telelock Pro trial has ended.', 'Ваш пробный период Telelock Pro закончился.'),
-    staff: t('You already have access to all Pro features.', 'У вас уже есть доступ ко всем функциям Pro.'),
-  };
-  return t('Payments aren’t available yet.', 'Оплата пока недоступна.') + ' ' + messages[state];
 }
 
 export const feedbackMaxLength = 1000;

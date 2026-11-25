@@ -180,3 +180,14 @@ test('Panorama restores its last display immediately and keeps local saves inter
   assert.match(items.KatkaFeedback.text,/Сохранено на ПК/);
   assert.equal(items.KatkaNotifications.enabled,true);
 });
+
+test('ordinary profiles retain notification settings and pending edits without staff access',async()=>{
+ const storage=new Map([[key,JSON.stringify({...initial,tier:'free',mode:'off'})]]);
+ const app=client({storage,request:async(action,body)=> action==='status'
+   ? {generation,tier:'free',language:'ru',settings:{mode:'off'}}
+   : {settings:{mode:body.telemetry.mode}}});
+ await app.send(1,'status');assert.equal(app.context.readProfile().mode,'off');
+ await app.send(2,'notifications','on');assert.equal(app.context.readProfile().mode,'on');
+ assert.ok(app.titles.at(-1).includes(':on:free:ru:'));
+ assert.ok(app.calls.some(call=>call.action==='settings'));
+});

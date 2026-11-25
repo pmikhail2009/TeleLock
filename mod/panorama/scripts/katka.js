@@ -293,7 +293,7 @@
     }
     var languageChoices = { en: { button: 'LanguageEn', name: 'English' }, ru: { button: 'LanguageRu', name: 'Русский' } };
     function t(en, ru) { return language === 'ru' ? ru : en; }
-    function fullAccess() { return accessTier === 'owner' || accessTier === 'test'; }
+    function fullAccess() { return true; }
     function render() {
       var labels = t({ on: 'On', off: 'Off', auto: 'Auto' }, { on: 'ВКЛ', off: 'ВЫКЛ', auto: 'Авто' });
       var copy = {

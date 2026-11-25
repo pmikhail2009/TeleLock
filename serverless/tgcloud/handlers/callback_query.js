@@ -1,7 +1,7 @@
 import { api, fetch } from 'sdk';
 import { gateway, secret } from '../lib/config.js';
 import { pairingForOwner } from '../lib/pairing.js';
-import { feedbackMessage, feedbackReply, languageMessage, localize, proMessage, proPaymentMessage,
+import { feedbackMessage, feedbackReply, languageMessage, localize, thanksMessage,
   reviewsMessage, settingsMessage } from '../lib/controls.js';
 
 async function relay(endpoint, body) {
@@ -26,21 +26,20 @@ export default async function(query, ctx) {
   if (payment) {
     let result;
     try {
-      result = await relay('pro', { owner });
+      result = await relay('thanks', { owner });
     } catch {
-      const language = query.message.text === proMessage('ru').text ? 'ru' : 'en';
+      const language = /[А-Яа-яЁё]/.test(query.message.text || '') ? 'ru' : 'en';
       await api.sendMessage({ chat_id: owner, text: localize(language,
-        'Could not confirm your Pro trial. Tap Continue to payment to try again.',
-        'Не удалось подтвердить пробный период Pro. Нажмите «Перейти к оплате» ещё раз.') });
+        'Could not register your thanks. Please try again.',
+        'Не удалось зарегистрировать ваше спасибо. Попробуйте ещё раз.') });
       return;
     }
-    const text = proPaymentMessage(result);
     try {
       await api.editMessageText({ chat_id: owner, message_id: query.message.message_id,
-        text, reply_markup: { inline_keyboard: [] } });
+        ...thanksMessage(result.language) });
     } catch (error) {
       if (!String(error.message).includes('message is not modified'))
-        await api.sendMessage({ chat_id: owner, text });
+        await api.sendMessage({ chat_id: owner, ...thanksMessage(result.language) });
     }
     return;
   }

@@ -57,7 +57,7 @@ test('heartbeat expires and telemetry rejects stale or foreign reports',async()=
     now+=31000;status=await (await f.call({action:'status',owner:101})).json();assert.equal(status.live.online,false);assert.equal(status.live.state,'unknown');
   } finally {Date.now=real;}
 });
-test('server preferences suppress pushes but complete cards, restrict free settings and schedule one reminder',async()=>mock(async sent=>{
+test('server preferences suppress pushes but complete cards, allow ordinary settings and schedule one reminder',async()=>mock(async sent=>{
   const f=fixture();await f.command(10);
   await f.call({action:'settings',owner:101,update:{mode:'off',repeat:15}});
   await f.call({action:'match',match:'123',origin:'bot'});
@@ -69,9 +69,9 @@ test('server preferences suppress pushes but complete cards, restrict free setti
   task.at=0;await f.directory.alarm();await f.directory.alarm();
   assert.equal(sent.filter(x=>x.text.includes('Reminder:')).length,1);
   f.rows.delete('access:101');
-  assert.equal((await f.call({action:'settings',owner:101,update:{mode:'on'}})).status,403);
-  assert.equal((await f.call({action:'testbot',owner:101})).status,403);
-  assert.deepEqual(await f.directory.preferences(101),{mode:'auto',repeat:0});
+  assert.equal((await f.call({action:'settings',owner:101,update:{mode:'on'}})).status,200);
+  assert.equal((await f.call({action:'testbot',owner:101})).status,200);
+  assert.deepEqual(await f.directory.preferences(101),{mode:'on',repeat:15});
 }));
 test('missing game confirmation terminates the card; alarms preserve bindings',async()=>mock(async sent=>{
   const f=fixture();await f.command(10);f.rows.get('task:card:one:'+generation).at=0;
